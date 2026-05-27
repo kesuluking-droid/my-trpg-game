@@ -1,5 +1,7 @@
-saves/
+chat_history/
+*.bat
 .env
 __pycache__/
 *.pyc
 .streamlit/
+待实现需求.txt
