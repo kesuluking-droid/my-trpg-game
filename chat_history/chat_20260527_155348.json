@@ -1,0 +1,44 @@
+{
+    "memory": "",
+    "history_archive": [],
+    "active_scene": [],
+    "minor_npcs": {},
+    "major_graph": {
+        "entities": {
+            "主角": {
+                "desc": "世界的变数",
+                "tags": [
+                    "玩家"
+                ],
+                "1_relational_facts": {},
+                "2_dynamic_status": {
+                    "physical": {
+                        "desc": "健康",
+                        "multiplier": 1.0
+                    },
+                    "mental": {
+                        "desc": "平静",
+                        "multiplier": 1.0
+                    }
+                },
+                "3_capabilities": {},
+                "4_experience_factors": {
+                    "general_combat": 1.0,
+                    "specific_match": {}
+                },
+                "5_traits": [],
+                "6_inventory": {}
+            }
+        },
+        "relations": []
+    },
+    "graveyard": {},
+    "director_directive": "",
+    "scene_index": 1,
+    "tension_history": [],
+    "current_location": "未知区域",
+    "mechanics_log": [],
+    "sync_log": [],
+    "world_tier": "近未来都市异能 / 中低武阶段",
+    "pc_name": "柯酥卤"
+}
