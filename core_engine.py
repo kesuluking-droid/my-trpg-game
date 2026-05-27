@@ -5,10 +5,12 @@ import json
 from openai import OpenAI
 from config import MODEL_PRO, MODEL_FLASH, API_BASE_URL, DEBUG_MODE
 import random
-from dotenv import load_dotenv
-
-# 加载 .env 文件中的环境变量到系统中
-load_dotenv()
+# =============================================================================
+# from dotenv import load_dotenv
+# 
+# # 加载 .env 文件中的环境变量到系统中
+# load_dotenv()
+# =============================================================================
 
 # 全局宏观战力锚定设置
 ANCHOR_THRESHOLD_TABLE = """
