@@ -7,6 +7,21 @@ from config import MODEL_PRO, MODEL_FLASH, API_BASE_URL, DEBUG_MODE
 import config
 import random
 
+# ==========================================
+# 🛑 云端自动基建算子 (无中生有版)
+# ==========================================
+# 1. 绝对路径提取，防止云端环境路径解析出 None 导致 AttributeError
+user_data_dir = os.path.dirname(os.path.abspath(config.USER_DATA_FILE))
+os.makedirs(user_data_dir, exist_ok=True)
+
+# 2. 如果文件不存在，或者文件异常大小为 0，则强行初始化一个干净的空字典 {}
+if not os.path.exists(config.USER_DATA_FILE) or os.path.getsize(config.USER_DATA_FILE) == 0:
+    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump({}, f, ensure_ascii=False, indent=4)
+
+# 3. 强行初始化专属玩家存档大目录
+os.makedirs(os.path.abspath(config.SAVE_DIR), exist_ok=True)
+
 # --- 账号与权限管理算子 ---
 
 def register_user(username, password, security_question, security_answer):

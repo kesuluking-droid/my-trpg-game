@@ -4,4 +4,5 @@ chat_history/
 __pycache__/
 *.pyc
 .streamlit/
-待实现需求.txtdata/
+待实现需求.txt
+data/
