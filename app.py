@@ -7,7 +7,91 @@ import copy
 import json
 
 st.set_page_config(page_title="简易RPG", layout="wide")
-st.title("简易RPG")
+st.title("Kesuluking-RPG")
+
+# ==========================================
+# 🛑 门卫系统：登录、注册与密码找回网关
+# ==========================================
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "current_user" not in st.session_state:
+    st.session_state.current_user = None
+
+if not st.session_state.logged_in:
+    st.caption("请先登录或注册以载入您的专属世界线")
+    
+    tab_login, tab_reg, tab_forget, tab_modify = st.tabs(["用户登录", "新用户注册", "找回密码", "修改密码"])
+    
+    with tab_login:
+        login_user = st.text_input("用户名", key="l_user")
+        login_pwd = st.text_input("密码", type="password", key="l_pwd")
+        if st.button("Kesuluking-RPG 启动！", use_container_width=True):
+            success, msg = core_engine.login_user(login_user, login_pwd)
+            if success:
+                st.session_state.logged_in = True
+                st.session_state.current_user = login_user
+                st.success("登录成功，正在进入游戏大厅...")
+                st.rerun() # 刷新网页，门卫放行！
+            else:
+                st.error(msg)
+                
+    with tab_reg:
+        reg_user = st.text_input("设定新用户名", key="r_user")
+        reg_pwd = st.text_input("设定新密码", type="password", key="r_pwd")
+        # 【新增】：确认密码输入框
+        reg_pwd_confirm = st.text_input("确认新密码", type="password", key="r_pwd_c") 
+        reg_question = st.text_input("设置密保问题用于找回密码 (例：我的第一只宠物叫什么？)", key="r_q")
+        reg_answer = st.text_input("设置密保答案", type="password", key="r_a")
+        
+        if st.button("创建新账号", use_container_width=True):
+            # 【新增】：本地先拦截比对，不一致直接报错，不向后端发送注册请求
+            if reg_pwd != reg_pwd_confirm:
+                st.error("两次输入的密码不一致，请重新检查！")
+            else:
+                success, msg = core_engine.register_user(reg_user, reg_pwd, reg_question, reg_answer)
+                if success:
+                    st.success(msg + " 请切换到【用户登录】标签页登录。")
+                else:
+                    st.error(msg)
+                
+    with tab_forget:
+        f_user = st.text_input("输入需要找回密码的用户名", key="f_user")
+        if f_user:
+            question = core_engine.get_security_question(f_user)
+            if question:
+                st.info(f"密保问题：{question}")
+                f_ans = st.text_input("输入答案", type="password", key="f_ans")
+                if st.button("验证并显示密码", use_container_width=True):
+                    success, result = core_engine.retrieve_password(f_user, f_ans)
+                    if success:
+                        st.success(f"验证成功！您的密码是：**{result}**")
+                    else:
+                        st.error(result)
+            else:
+                st.warning("该用户不存在，或属于未设置密保的旧版账号。")
+    
+    with tab_modify:
+        m_user = st.text_input("用户名", key="m_user")
+        m_old_pwd = st.text_input("旧密码", type="password", key="m_old_pwd")
+        m_new_pwd = st.text_input("新密码", type="password", key="m_new_pwd")
+        m_new_pwd_c = st.text_input("确认新密码", type="password", key="m_new_pwd_c")
+        
+        if st.button("确认修改密码", use_container_width=True):
+            if m_new_pwd != m_new_pwd_c:
+                st.error("两次输入的新密码不一致，请重新检查。")
+            else:
+                success, msg = core_engine.modify_password(m_user, m_old_pwd, m_new_pwd)
+                if success:
+                    st.success(msg + " 请切换到【用户登录】标签页使用新密码重新登录。")
+                else:
+                    st.error(msg)
+    # 核心拦截器：如果没登录，程序到这里强制刹车，绝对不会执行下面的任何游戏代码！
+    st.stop()
+
+# ==========================================
+# 🟢 门卫放行：以下为原本的全局变量与状态机初始化
+# ==========================================
+
 
 DEFAULT_PC = {
     "desc": "世界的变数",

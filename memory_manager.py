@@ -1,19 +1,37 @@
 import json
 import os
-from config import HISTORY_DIR
-
-os.makedirs(HISTORY_DIR, exist_ok=True)
-
-GM_HISTORY_DIR = os.path.join(HISTORY_DIR, "gm_data")
-if not os.path.exists(GM_HISTORY_DIR):
-    os.makedirs(GM_HISTORY_DIR)
+import config
+import streamlit as st
 
 def get_chat_files():
-    return sorted([f for f in os.listdir(HISTORY_DIR) if f.endswith(".json")], reverse=True)
+    current_user = st.session_state.get("current_user")
+    if not current_user:
+        return []
+        
+    user_dir = os.path.join(config.SAVE_DIR, current_user)
+    if not os.path.exists(user_dir):
+        return []
+        
+    # 动态读取当前用户的专属存档（过滤掉新加入的 major_graph.json）
+    return sorted(
+        [f for f in os.listdir(user_dir) if f.endswith(".json") and f != "major_graph.json"], 
+        reverse=True
+    )
 
 def save_session(file_name, memory, history_archive, active_scene, minor_npcs, major_graph, graveyard, director_directive, scene_index, tension_history, current_location, mechanics_log, sync_log, gm_memory, world_tier, pc_name):
     if not file_name:
         return
+        
+    current_user = st.session_state.get("current_user")
+    if not current_user:
+        return
+        
+    # 动态组装当前用户专属路径
+    user_dir = os.path.join(config.SAVE_DIR, current_user)
+    gm_dir = os.path.join(user_dir, "gm_data")
+    os.makedirs(user_dir, exist_ok=True)
+    os.makedirs(gm_dir, exist_ok=True)
+    
     data = {
         "memory": memory,
         "history_archive": history_archive,
@@ -23,24 +41,24 @@ def save_session(file_name, memory, history_archive, active_scene, minor_npcs, m
         "graveyard": graveyard,
         "director_directive": director_directive,
         "scene_index": scene_index,
-        "tension_history": tension_history,          # 改成列表
+        "tension_history": tension_history,
         "current_location": current_location,
         "mechanics_log": mechanics_log,
         "sync_log": sync_log,
-        "world_tier": world_tier,       # 【新增】
+        "world_tier": world_tier,
         "pc_name": pc_name
     }
-    with open(os.path.join(HISTORY_DIR, file_name), "w", encoding="utf-8") as f:
+    
+    with open(os.path.join(user_dir, file_name), "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
         
     gm_file = file_name.replace(".json", "_gm.json")
-    with open(os.path.join(GM_HISTORY_DIR, gm_file), "w", encoding="utf-8") as f:
+    with open(os.path.join(gm_dir, gm_file), "w", encoding="utf-8") as f:
         json.dump(gm_memory, f, ensure_ascii=False, indent=4)
+
 
 def load_session(file_name):
     import os, json
-    # (假设你的 HISTORY_DIR 已经在文件顶部定义)
-    file_path = os.path.join(HISTORY_DIR, file_name)
     
     default_minor = {}
     default_major = {
@@ -63,8 +81,16 @@ def load_session(file_name):
     }
     default_graveyard = {}
     
-    # 统一定义一个发生错误或找不到文件时的保底全量返回值 (共 13 个参数，包含最后新增的三个日志)
-    default_return = ("", [], [], default_minor, default_major, default_graveyard, "", 1, [], "未知区域", [], [], [],"","")
+    default_return = ("", [], [], default_minor, default_major, default_graveyard, "", 1, [], "未知区域", [], [], [], "", "")
+
+    # 权限校验与动态路径装载
+    current_user = st.session_state.get("current_user")
+    if not current_user:
+        return default_return
+        
+    user_dir = os.path.join(config.SAVE_DIR, current_user)
+    gm_dir = os.path.join(user_dir, "gm_data")
+    file_path = os.path.join(user_dir, file_name)
 
     if not os.path.exists(file_path):
         return default_return
@@ -77,7 +103,7 @@ def load_session(file_name):
         # 2. 读取伴生裁判系统存档 (Twin Session - GM Memory)
         gm_memory = []
         gm_file = file_name.replace(".json", "_gm.json")
-        gm_path = os.path.join(GM_HISTORY_DIR, gm_file)
+        gm_path = os.path.join(gm_dir, gm_file)
         if os.path.exists(gm_path):
             with open(gm_path, "r", encoding="utf-8") as gm_f:
                 gm_memory = json.load(gm_f)
@@ -91,17 +117,16 @@ def load_session(file_name):
             data.get("graveyard", default_graveyard),
             data.get("director_directive", ""),
             data.get("scene_index", 1),
-            data.get("tension_history", []),         # 改成列表
+            data.get("tension_history", []), 
             data.get("current_location", "未知区域"),
-            data.get("mechanics_log", []),           # 黑匣子检定日志
-            data.get("sync_log", []),                # 状态变动落盘日志
-            gm_memory,                                # 【新增】：伴生裁判长线记忆
-            data.get("world_tier", "近未来都市异能 / 中低武阶段"), # 【新增】：兜底默认世界
+            data.get("mechanics_log", []), 
+            data.get("sync_log", []), 
+            gm_memory, 
+            data.get("world_tier", "近未来都市异能 / 中低武阶段"),
             data.get("pc_name", "主角")
         )
         
     except Exception as e:
-        # 捕获 JSONDecodeError 或其他各种读取异常，防止硬核闪退
         print(f"[警告] 存档 {file_name} 读取失败，已降级为初始状态。错误信息: {e}")
         return default_return
     

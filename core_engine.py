@@ -4,13 +4,132 @@ import re
 import json
 from openai import OpenAI
 from config import MODEL_PRO, MODEL_FLASH, API_BASE_URL, DEBUG_MODE
+import config
 import random
-# =============================================================================
-# from dotenv import load_dotenv
-# 
-# # 加载 .env 文件中的环境变量到系统中
-# load_dotenv()
-# =============================================================================
+
+# --- 账号与权限管理算子 ---
+
+def register_user(username, password, security_question, security_answer):
+    """玩家注册算子：存入密码与密保信息，并初始化专属空间"""
+    username = username.strip()
+    password = password.strip()
+    security_question = security_question.strip()
+    security_answer = security_answer.strip()
+    
+    if not username or not password or not security_question or not security_answer:
+        return False, "所有字段均不能为空。"
+    
+    if os.path.exists(config.USER_DATA_FILE):
+        with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
+            users = json.load(f)
+    else:
+        users = {}
+        
+    if username in users:
+        return False, "该用户名已被注册，请更换。"
+    
+    # 数据结构升级：存入字典形式
+    users[username] = {
+        "password": password,
+        "question": security_question,
+        "answer": security_answer
+    }
+    
+    os.makedirs(os.path.dirname(config.USER_DATA_FILE), exist_ok=True)
+    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=4)
+        
+    os.makedirs(os.path.join(config.SAVE_DIR, username), exist_ok=True)
+    return True, "注册成功！"
+
+def login_user(username, password):
+    """玩家登录算子：兼容新旧数据结构"""
+    username = username.strip()
+    password = password.strip()
+    
+    if not os.path.exists(config.USER_DATA_FILE):
+        return False, "系统暂无用户注册记录。"
+        
+    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
+        users = json.load(f)
+        
+    if username in users:
+        user_data = users[username]
+        # 兼容新版字典结构
+        if isinstance(user_data, dict) and user_data.get("password") == password:
+            return True, "登录成功"
+        # 兼容旧版纯字符串结构
+        elif isinstance(user_data, str) and user_data == password:
+            return True, "登录成功"
+            
+    return False, "用户名或密码错误"
+
+def get_security_question(username):
+    """提取密保问题算子"""
+    username = username.strip()
+    if not os.path.exists(config.USER_DATA_FILE):
+        return None
+        
+    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
+        users = json.load(f)
+        
+    if username in users and isinstance(users[username], dict):
+        return users[username].get("question")
+    return None
+
+def retrieve_password(username, answer):
+    """验证密保并返回密码算子"""
+    username = username.strip()
+    answer = answer.strip()
+    
+    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
+        users = json.load(f)
+        
+    if username in users and isinstance(users[username], dict):
+        if users[username].get("answer") == answer:
+            return True, users[username].get("password")
+            
+    return False, "密保答案错误，或该账号为旧版账号未设置密保。"
+
+def modify_password(username, old_password, new_password):
+    """修改密码算子：校验旧密码，兼容旧版数据结构"""
+    username = username.strip()
+    old_password = old_password.strip()
+    new_password = new_password.strip()
+    
+    if not username or not old_password or not new_password:
+        return False, "字段不能为空。"
+        
+    if not os.path.exists(config.USER_DATA_FILE):
+        return False, "系统暂无用户注册记录。"
+        
+    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
+        users = json.load(f)
+        
+    if username not in users:
+        return False, "该用户不存在。"
+        
+    user_data = users[username]
+    
+    # 校验旧密码并执行更新
+    if isinstance(user_data, dict):
+        if user_data.get("password") != old_password:
+            return False, "旧密码错误。"
+        users[username]["password"] = new_password
+    elif isinstance(user_data, str):
+        if user_data != old_password:
+            return False, "旧密码错误。"
+        # 旧版账号验证通过后，强制升级为字典结构
+        users[username] = {
+            "password": new_password,
+            "question": "",
+            "answer": ""
+        }
+        
+    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=4)
+        
+    return True, "密码修改成功。"
 
 # 全局宏观战力锚定设置
 ANCHOR_THRESHOLD_TABLE = """
@@ -22,22 +141,6 @@ ANCHOR_THRESHOLD_TABLE = """
 - Base 1-11 (微弱级/日常级): 日常绊倒、生锈的普通门锁、微风。普通人可轻易化解，仅造成体力消耗或轻微阻碍。
 """
 
-# =============================================================================
-# def get_api_key():
-#     # 1. 优先尝试从环境变量（包含刚刚加载的 .env）中读取
-#     key = os.getenv("OPENAI_API_KEY")
-#     if key:
-#         return key
-#         
-#     # 2. 如果没找到，再尝试从 Streamlit 的 secrets 中读取（作为后备）
-#     try:
-#         import streamlit as st
-#         return st.secrets.get("OPENAI_API_KEY")
-#     except Exception:
-#         return None
-# 
-# client = OpenAI(api_key=get_api_key(), base_url=API_BASE_URL)
-# =============================================================================
 
 def get_user_client():
     import streamlit as st
