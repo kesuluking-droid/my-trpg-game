@@ -16,7 +16,7 @@
 
 ### 方案 B：本地部署版
 1. 下载本项目核心代码至本地。
-2. 确保本地已安装 Python 环境及所需依赖（`streamlit`, `openai`, `httpx`）。
+2. 确保本地已安装 Python 环境及所需依赖（`streamlit`, `openai`, `httpx`, `supabase`）。
 3. 可以在项目根目录下创建一个启动批处理文件驱动程序（推荐使用大模型协助编写）。例如新建一个 `run.bat`，写入以下内容：
 ```bat
 @echo off
