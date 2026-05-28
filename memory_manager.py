@@ -2,21 +2,29 @@ import json
 import os
 import config
 import streamlit as st
+from supabase import create_client, Client # 🟢 修正点1：引入正确的客户端类，彻底移除 import supabase 避免命名冲突
+
+# --- 🚀 激活 Supabase 官方直连通道 ---
+@st.cache_resource
+def get_supabase_client() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+db_client = get_supabase_client() # 🟢 修正点2：实例化为 db_client 变量，彻底断绝对齐漏洞
 
 def get_chat_files():
     current_user = st.session_state.get("current_user")
     if not current_user:
         return []
         
-    user_dir = os.path.join(config.SAVE_DIR, current_user)
-    if not os.path.exists(user_dir):
+    try:
+        # 🟢 修正点3：全线改用 db_client.table
+        res = db_client.table("user_sessions").select("file_name").eq("username", current_user).order("updated_at", desc=True).execute()
+        return [item["file_name"] for item in res.data if item["file_name"] != "major_graph.json"]
+    except Exception as e:
+        print(f"[错误] 获取云端存档列表失败: {e}")
         return []
-        
-    # 动态读取当前用户的专属存档（过滤掉新加入的 major_graph.json）
-    return sorted(
-        [f for f in os.listdir(user_dir) if f.endswith(".json") and f != "major_graph.json"], 
-        reverse=True
-    )
 
 def save_session(file_name, memory, history_archive, active_scene, minor_npcs, major_graph, graveyard, director_directive, scene_index, tension_history, current_location, mechanics_log, sync_log, gm_memory, world_tier, pc_name):
     if not file_name:
@@ -26,12 +34,6 @@ def save_session(file_name, memory, history_archive, active_scene, minor_npcs, m
     if not current_user:
         return
         
-    # 动态组装当前用户专属路径
-    user_dir = os.path.join(config.SAVE_DIR, current_user)
-    gm_dir = os.path.join(user_dir, "gm_data")
-    os.makedirs(user_dir, exist_ok=True)
-    os.makedirs(gm_dir, exist_ok=True)
-    
     data = {
         "memory": memory,
         "history_archive": history_archive,
@@ -49,17 +51,19 @@ def save_session(file_name, memory, history_archive, active_scene, minor_npcs, m
         "pc_name": pc_name
     }
     
-    with open(os.path.join(user_dir, file_name), "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-        
-    gm_file = file_name.replace(".json", "_gm.json")
-    with open(os.path.join(gm_dir, gm_file), "w", encoding="utf-8") as f:
-        json.dump(gm_memory, f, ensure_ascii=False, indent=4)
-
+    try:
+        # 🟢 修正点4：改用 db_client.table 完美同步云端
+        db_client.table("user_sessions").upsert({
+            "username": current_user,
+            "file_name": file_name,
+            "session_data": data,
+            "gm_data": gm_memory,
+            "updated_at": "now()"
+        }, on_conflict="username, file_name").execute()
+    except Exception as e:
+        print(f"[警告] 存档 {file_name} 同步云端失败。错误信息: {e}")
 
 def load_session(file_name):
-    import os, json
-    
     default_minor = {}
     default_major = {
         "entities": {
@@ -83,30 +87,19 @@ def load_session(file_name):
     
     default_return = ("", [], [], default_minor, default_major, default_graveyard, "", 1, [], "未知区域", [], [], [], "", "")
 
-    # 权限校验与动态路径装载
     current_user = st.session_state.get("current_user")
     if not current_user:
         return default_return
         
-    user_dir = os.path.join(config.SAVE_DIR, current_user)
-    gm_dir = os.path.join(user_dir, "gm_data")
-    file_path = os.path.join(user_dir, file_name)
-
-    if not os.path.exists(file_path):
-        return default_return
-        
     try:
-        # 1. 读取主线剧情与状态存档
-        with open(file_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        # 🟢 修正点5：改用 db_client.table 拉取数据
+        res = db_client.table("user_sessions").select("session_data", "gm_data").eq("username", current_user).eq("file_name", file_name).execute()
+        
+        if not res.data:
+            return default_return
             
-        # 2. 读取伴生裁判系统存档 (Twin Session - GM Memory)
-        gm_memory = []
-        gm_file = file_name.replace(".json", "_gm.json")
-        gm_path = os.path.join(gm_dir, gm_file)
-        if os.path.exists(gm_path):
-            with open(gm_path, "r", encoding="utf-8") as gm_f:
-                gm_memory = json.load(gm_f)
+        data = res.data[0]["session_data"]
+        gm_memory = res.data[0]["gm_data"]
                 
         return (
             data.get("memory", ""), 
@@ -127,7 +120,7 @@ def load_session(file_name):
         )
         
     except Exception as e:
-        print(f"[警告] 存档 {file_name} 读取失败，已降级为初始状态。错误信息: {e}")
+        print(f"[警告] 存档 {file_name} 云端读取失败，已降级为初始状态。错误信息: {e}")
         return default_return
     
 def process_npc_updates(extracted_data, minor_npcs, major_graph, graveyard, scene_index):

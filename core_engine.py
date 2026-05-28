@@ -7,145 +7,74 @@ from config import MODEL_PRO, MODEL_FLASH, API_BASE_URL, DEBUG_MODE
 import config
 import random
 import streamlit as st
+from supabase import create_client, Client
+
+@st.cache_resource
+def get_supabase_client() -> Client:
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+db_client = get_supabase_client()
 
 # ==========================================
 # 🛑 云端自动基建算子 (无中生有版)
 # ==========================================
 # 1. 绝对路径提取，防止云端环境路径解析出 None 导致 AttributeError
-user_data_dir = os.path.dirname(os.path.abspath(config.USER_DATA_FILE))
-os.makedirs(user_data_dir, exist_ok=True)
-
-# 2. 如果文件不存在，或者文件异常大小为 0，则强行初始化一个干净的空字典 {}
-if not os.path.exists(config.USER_DATA_FILE) or os.path.getsize(config.USER_DATA_FILE) == 0:
-    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump({}, f, ensure_ascii=False, indent=4)
-
-# 3. 强行初始化专属玩家存档大目录
-os.makedirs(os.path.abspath(config.SAVE_DIR), exist_ok=True)
 
 # --- 账号与权限管理算子 ---
-
 def register_user(username, password, security_question, security_answer):
-    """玩家注册算子：存入密码与密保信息，并初始化专属空间"""
     username = username.strip()
     password = password.strip()
-    security_question = security_question.strip()
-    security_answer = security_answer.strip()
-    
     if not username or not password or not security_question or not security_answer:
         return False, "所有字段均不能为空。"
-    
-    if os.path.exists(config.USER_DATA_FILE):
-        with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
-            users = json.load(f)
-    else:
-        users = {}
-        
-    if username in users:
-        return False, "该用户名已被注册，请更换。"
-    
-    # 数据结构升级：存入字典形式
-    users[username] = {
-        "password": password,
-        "question": security_question,
-        "answer": security_answer
-    }
-    
-    os.makedirs(os.path.dirname(config.USER_DATA_FILE), exist_ok=True)
-    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=4)
-        
-    os.makedirs(os.path.join(config.SAVE_DIR, username), exist_ok=True)
-    return True, "注册成功！"
+    try:
+        db_client.table("users_auth").insert({
+            "username": username, "password": password, 
+            "security_question": security_question, "security_answer": security_answer
+        }).execute()
+        return True, "注册成功！"
+    except Exception as e:
+        if "duplicate key" in str(e):
+            return False, "该用户名已被注册，请更换。"
+        return False, f"注册失败: {str(e)}"
 
 def login_user(username, password):
-    """玩家登录算子：兼容新旧数据结构"""
     username = username.strip()
     password = password.strip()
-    
-    if not os.path.exists(config.USER_DATA_FILE):
-        return False, "系统暂无用户注册记录。"
-        
-    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
-        
-    if username in users:
-        user_data = users[username]
-        # 兼容新版字典结构
-        if isinstance(user_data, dict) and user_data.get("password") == password:
+    try:
+        res = db_client.table("users_auth").select("*").eq("username", username).execute()
+        if res.data and res.data[0]["password"] == password:
             return True, "登录成功"
-        # 兼容旧版纯字符串结构
-        elif isinstance(user_data, str) and user_data == password:
-            return True, "登录成功"
-            
-    return False, "用户名或密码错误"
+        return False, "用户名或密码错误"
+    except Exception:
+        return False, "登录验证失败，请检查数据库连接。"
 
 def get_security_question(username):
-    """提取密保问题算子"""
-    username = username.strip()
-    if not os.path.exists(config.USER_DATA_FILE):
+    try:
+        res = db_client.table("users_auth").select("security_question").eq("username", username.strip()).execute()
+        return res.data[0]["security_question"] if res.data else None
+    except Exception:
         return None
-        
-    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
-        
-    if username in users and isinstance(users[username], dict):
-        return users[username].get("question")
-    return None
 
 def retrieve_password(username, answer):
-    """验证密保并返回密码算子"""
-    username = username.strip()
-    answer = answer.strip()
-    
-    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
-        
-    if username in users and isinstance(users[username], dict):
-        if users[username].get("answer") == answer:
-            return True, users[username].get("password")
-            
-    return False, "密保答案错误，或该账号为旧版账号未设置密保。"
+    try:
+        res = db_client.table("users_auth").select("password", "security_answer").eq("username", username.strip()).execute()
+        if res.data and res.data[0]["security_answer"] == answer.strip():
+            return True, res.data[0]["password"]
+        return False, "密保答案错误。"
+    except Exception:
+        return False, "数据查询失败。"
 
 def modify_password(username, old_password, new_password):
-    """修改密码算子：校验旧密码，兼容旧版数据结构"""
-    username = username.strip()
-    old_password = old_password.strip()
-    new_password = new_password.strip()
-    
-    if not username or not old_password or not new_password:
-        return False, "字段不能为空。"
-        
-    if not os.path.exists(config.USER_DATA_FILE):
-        return False, "系统暂无用户注册记录。"
-        
-    with open(config.USER_DATA_FILE, "r", encoding="utf-8") as f:
-        users = json.load(f)
-        
-    if username not in users:
-        return False, "该用户不存在。"
-        
-    user_data = users[username]
-    
-    # 校验旧密码并执行更新
-    if isinstance(user_data, dict):
-        if user_data.get("password") != old_password:
-            return False, "旧密码错误。"
-        users[username]["password"] = new_password
-    elif isinstance(user_data, str):
-        if user_data != old_password:
-            return False, "旧密码错误。"
-        # 旧版账号验证通过后，强制升级为字典结构
-        users[username] = {
-            "password": new_password,
-            "question": "",
-            "answer": ""
-        }
-        
-    with open(config.USER_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=4)
-        
-    return True, "密码修改成功。"
+    if not login_user(username, old_password)[0]:
+        return False, "旧密码错误。"
+    try:
+        db_client.table("users_auth").update({"password": new_password.strip()}).eq("username", username.strip()).execute()
+        return True, "密码修改成功。"
+    except Exception as e:
+        return False, f"修改失败: {str(e)}"
+
 
 # 全局宏观战力锚定设置
 ANCHOR_THRESHOLD_TABLE = """
@@ -1162,72 +1091,28 @@ def sync_dynamic_status(rendered_text, target_name, major_graph, pc_name="主角
 # --- 存档物理销毁与重命名算子 ---
 
 def rename_user_session(old_file_name, new_name):
-    """将指定的存档文件及伴生 GM 存档安全重命名"""
     current_user = st.session_state.get("current_user")
-    if not current_user or not old_file_name:
-        return False, "用户未登录或未选择有效存档。"
-        
-    new_name = new_name.strip()
-    if not new_name:
-        return False, "新名字不能为空。"
-        
-    # 强御安全清洗：确保用户没自己输入 .json，统一后缀格式
+    if not current_user or not old_file_name or not new_name.strip():
+        return False, "参数无效。"
     if not new_name.endswith(".json"):
         new_name += ".json"
-        
-    user_dir = os.path.join(config.SAVE_DIR, current_user)
-    gm_dir = os.path.join(user_dir, "gm_data")
-    
-    old_path = os.path.join(user_dir, old_file_name)
-    new_path = os.path.join(user_dir, new_name)
-    
-    # 边界检测：防止重名覆盖
-    if os.path.exists(new_path):
-        return False, "已存在同名存档，请更换名字。"
-        
     try:
-        # 1. 物理重命名主线故事 JSON
-        if os.path.exists(old_path):
-            os.rename(old_path, new_path)
-            
-        # 2. 物理重命名伴生 GM 裁判 JSON
-        old_gm_file = old_file_name.replace(".json", "_gm.json")
-        new_gm_file = new_name.replace(".json", "_gm.json")
-        old_gm_path = os.path.join(gm_dir, old_gm_file)
-        new_gm_path = os.path.join(gm_dir, new_gm_file)
-        
-        if os.path.exists(old_gm_path):
-            os.rename(old_gm_path, new_gm_path)
-            
+        db_client.table("user_sessions").update({"file_name": new_name}).eq("username", current_user).eq("file_name", old_file_name).execute()
         return True, new_name
-    except Exception as e:
-        return False, f"物理重命名失败: {str(e)}"
-
+    except Exception:
+        return False, "新名字已被占用。"
 
 def delete_user_session(file_name):
-    """物理粉碎指定的存档文件及伴生 GM 存档"""
     current_user = st.session_state.get("current_user")
     if not current_user or not file_name:
-        return False, "用户未登录或未选择有效存档。"
-        
-    user_dir = os.path.join(config.SAVE_DIR, current_user)
-    gm_dir = os.path.join(user_dir, "gm_data")
-    
-    file_path = os.path.join(user_dir, file_name)
-    gm_file = file_name.replace(".json", "_gm.json")
-    gm_path = os.path.join(gm_dir, gm_file)
-    
+        return False, "无效操作。"
     try:
-        # 物理粉碎主档
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        # 物理粉碎伴生 GM 档
-        if os.path.exists(gm_path):
-            os.remove(gm_path)
-        return True, "存档已安全粉碎。"
+        db_client.table("user_sessions").delete().eq("username", current_user).eq("file_name", file_name).execute()
+        return True, "存档已成功粉碎。"
     except Exception as e:
-        return False, f"物理物理删除失败: {str(e)}"
-
+        return False, f"粉碎失败: {str(e)}"
+    
+    
 if __name__ == "__main__":
     print("测试 Core Engine 流式输出 (PRO)...")
     test_msgs = [{"role": "user", "content": "你好，测试一下！"}]
