@@ -921,42 +921,48 @@ if user_input:
                         assistant_reply = re.sub(r'<STATUS_UPDATE:\s*(.+?)>', '', assistant_reply).strip()
                         text_placeholder.markdown(assistant_reply)
                         
-                        with st.spinner("系统感知到剧情突变，动态图谱落盘中..."):
-                            # 【核心修改】：将用户输入作为前缀拼给算子，强行提醒大模型：玩家这回合说他学了新武功！
-                            perceived_text = f"【玩家声明动作】：{user_input}\n【剧情演变结果】：{assistant_reply}"
-                            st.session_state.major_graph, raw_json = core_engine.sync_dynamic_status(
-                                perceived_text, sync_target, st.session_state.major_graph, st.session_state.pc_name # 【新增传参】
-                            )
-                            if raw_json:
-                                st.session_state.sync_log.append({
-                                    "scene": st.session_state.scene_index,
-                                    "target": sync_target,
-                                    "changes": raw_json
-                                })
-                        st.toast(f"角色 {sync_target} 身心状态已同步")
+                        # 🛡️ 【核心修复 1】：边界空值阻断（常规状态同步）
+                        perceived_text = f"【玩家声明动作】：{user_input}\n【剧情演变结果】：{assistant_reply}"
+                        if perceived_text.strip() and len(assistant_reply.strip()) > 2:
+                            with st.spinner("系统感知到剧情突变，动态图谱落盘中..."):
+                                st.session_state.major_graph, raw_json = core_engine.sync_dynamic_status(
+                                    perceived_text, sync_target, st.session_state.major_graph, st.session_state.pc_name
+                                )
+                                if raw_json:
+                                    st.session_state.sync_log.append({
+                                        "scene": st.session_state.scene_index,
+                                        "target": sync_target,
+                                        "changes": raw_json
+                                    })
+                            st.toast(f"角色 {sync_target} 身心状态已同步")
+                        else:
+                            print("[系统安全阀] 阻断：感知文本异常，跳过常规同步算子。")
 
                     elif intent.get("is_action"):
-                        with st.spinner("战后伤情与状态落盘中..."):
-                            # 【核心修复】：必须用两个变量接收，防止 major_graph 变成元组
-                            st.session_state.major_graph, raw_json_combat = core_engine.sync_dynamic_status(
-                                    assistant_reply, target, st.session_state.major_graph, st.session_state.pc_name
-                                )
-                            # 顺手把战后状态也记入你的新日志系统
-                            if raw_json_combat:
-                                st.session_state.sync_log.append({
+                        # 🛡️ 【核心修复 2】：边界空值阻断（战斗伤情同步）
+                        if assistant_reply and len(assistant_reply.strip()) > 2:
+                            with st.spinner("战后伤情与状态落盘中..."):
+                                st.session_state.major_graph, raw_json_combat = core_engine.sync_dynamic_status(
+                                        assistant_reply, target, st.session_state.major_graph, st.session_state.pc_name
+                                    )
+                                # 顺手把战后状态也记入你的新日志系统
+                                if raw_json_combat:
+                                    st.session_state.sync_log.append({
+                                        "scene": st.session_state.scene_index,
+                                        "target": target,
+                                        "changes": raw_json_combat
+                                    })
+                                
+                                st.session_state.mechanics_log.append({
                                     "scene": st.session_state.scene_index,
-                                    "target": target,
-                                    "changes": raw_json_combat
+                                    "action": action_type,
+                                    "target": f"{initiator} -> {target or '环境'}",
+                                    "log": system_injection,
+                                    "raw_intent": intent
                                 })
-                            
-                            st.session_state.mechanics_log.append({
-                                "scene": st.session_state.scene_index,
-                                "action": action_type,
-                                "target": f"{initiator} -> {target or '环境'}",
-                                "log": system_injection,
-                                "raw_intent": intent  # 【新增】：将意图拦截器的原始 JSON 成果永久落盘
-                            })
-                        st.toast("角色身心状态已根据战斗结果同步！")
+                            st.toast("角色身心状态已根据战斗结果同步！")
+                        else:
+                            print("[系统安全阀] 阻断：战斗结算文本异常，跳过战斗伤情落盘。")
 
                     st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})
                     st.session_state.active_scene.append({"role": "assistant", "content": assistant_reply})
@@ -965,9 +971,17 @@ if user_input:
             except Exception as e:
                 # st.error(f"生成失败: {e}")
                 st.exception(e)
-                st.session_state.history_archive.pop()
-                st.session_state.active_scene.pop()
+                
+                # 🛡️ 【核心修复 3】：极其危险的物理 pop 阻断！
+                # 以前这里无脑 pop，如果报错就会直接把玩家刚刚输入的对话给删掉，导致“莫名消失”！
+                # 现在强行校验：只有最后一条明确是 user，且 assistant 还没加进去时，才能安全回退。
+                if st.session_state.history_archive and st.session_state.history_archive[-1]["role"] == "user":
+                    st.session_state.history_archive.pop()
+                if st.session_state.active_scene and st.session_state.active_scene[-1]["role"] == "user":
+                    st.session_state.active_scene.pop()
+                    
                 trigger_save()
+                
 # 确保在文件最底部追加此段代码，处理弹窗的根节点渲染
 if st.session_state.get("show_settings", False):
     settings_dialog()

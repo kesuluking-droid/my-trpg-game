@@ -19,11 +19,12 @@ def get_chat_files():
         return []
         
     try:
-        # 🟢 修正点3：全线改用 db_client.table
+        # 全线改用 db_client.table
         res = db_client.table("user_sessions").select("file_name").eq("username", current_user).order("updated_at", desc=True).execute()
         return [item["file_name"] for item in res.data if item["file_name"] != "major_graph.json"]
     except Exception as e:
-        print(f"[错误] 获取云端存档列表失败: {e}")
+        # 🟢 健壮性增强：升级为高亮严重报错，严禁默默 pass
+        print(f"[严重错误] 获取云端存档列表物理失败。底层原因: {e}")
         return []
 
 def save_session(file_name, memory, history_archive, active_scene, minor_npcs, major_graph, graveyard, director_directive, scene_index, tension_history, current_location, mechanics_log, sync_log, gm_memory, world_tier, pc_name):
@@ -92,35 +93,40 @@ def load_session(file_name):
         return default_return
         
     try:
-        # 🟢 修正点5：改用 db_client.table 拉取数据
+        # 改用 db_client.table 拉取数据
         res = db_client.table("user_sessions").select("session_data", "gm_data").eq("username", current_user).eq("file_name", file_name).execute()
         
         if not res.data:
             return default_return
             
-        data = res.data[0]["session_data"]
-        gm_memory = res.data[0]["gm_data"]
+        # 🟢 健壮性增强：提取时若整个字段由于网络断流存成了 None，物理强制回退到标准字典，防止抛出 AttributeError
+        raw_data = res.data[0].get("session_data")
+        data = raw_data if isinstance(raw_data, dict) else {}
+        
+        raw_gm = res.data[0].get("gm_data")
+        gm_memory = raw_gm if isinstance(raw_gm, list) else []
                 
+        # 🟢 终极防御：在 get 层面强制校验返回类型，严禁释放 None 溢出到前端导致 .append() 闪退
         return (
-            data.get("memory", ""), 
-            data.get("history_archive", []),
-            data.get("active_scene", []),
-            data.get("minor_npcs", default_minor),
-            data.get("major_graph", default_major),
-            data.get("graveyard", default_graveyard),
-            data.get("director_directive", ""),
-            data.get("scene_index", 1),
-            data.get("tension_history", []), 
-            data.get("current_location", "未知区域"),
-            data.get("mechanics_log", []), 
-            data.get("sync_log", []), 
+            data.get("memory") or "", 
+            data.get("history_archive") if isinstance(data.get("history_archive"), list) else [],
+            data.get("active_scene") if isinstance(data.get("active_scene"), list) else [],
+            data.get("minor_npcs") if isinstance(data.get("minor_npcs"), dict) else default_minor,
+            data.get("major_graph") if isinstance(data.get("major_graph"), dict) else default_major,
+            data.get("graveyard") if isinstance(data.get("graveyard"), dict) else default_graveyard,
+            data.get("director_directive") or "",
+            int(data.get("scene_index")) if data.get("scene_index") is not None else 1,
+            data.get("tension_history") if isinstance(data.get("tension_history"), list) else [], 
+            data.get("current_location") or "未知区域",
+            data.get("mechanics_log") if isinstance(data.get("mechanics_log"), list) else [], 
+            data.get("sync_log") if isinstance(data.get("sync_log"), list) else [], 
             gm_memory, 
-            data.get("world_tier", "近未来都市异能 / 中低武阶段"),
-            data.get("pc_name", "主角")
+            data.get("world_tier") or "近未来都市异能 / 中低武阶段",
+            data.get("pc_name") or "主角"
         )
         
     except Exception as e:
-        print(f"[警告] 存档 {file_name} 云端读取失败，已降级为初始状态。错误信息: {e}")
+        print(f"[警告] 存档 {file_name} 云端读取严重崩溃，已执行物理降级防护。错误信息: {e}")
         return default_return
     
 def process_npc_updates(extracted_data, minor_npcs, major_graph, graveyard, scene_index):
