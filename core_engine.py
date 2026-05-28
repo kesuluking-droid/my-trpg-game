@@ -332,8 +332,13 @@ def extract_memory_summary(messages, scene_index):
     }}"""
     client = get_user_client()
     if not client:
-        yield "【系统提示】：请先在左侧边栏配置正确的 DeepSeek API Key。"
-        return
+        return {
+            "summary": "【系统提示】：未配置正确的 API Key，无法提取摘要。", 
+            "current_location": "未知", 
+            "current_tension": 0, 
+            "npc_updates": [], 
+            "relation_updates": []
+        }
     try:
         response = client.chat.completions.create(
             model=MODEL_FLASH,
@@ -472,8 +477,7 @@ def generate_narrative_directive(current_tension, major_graph, manual_targets=No
 
     client = get_user_client()
     if not client:
-        yield "【系统提示】：请先在左侧边栏配置正确的 DeepSeek API Key。"
-        return
+        return ""
     
     try:
         response = client.chat.completions.create(
@@ -540,8 +544,7 @@ def init_npc_combat_stats(target_name, active_scene, major_graph, world_tier):
 
     client = get_user_client()
     if not client:
-        yield "【系统提示】：请先在左侧边栏配置正确的 DeepSeek API Key。"
-        return
+        return major_graph
     try:
         response = client.chat.completions.create(
             model=MODEL_FLASH,
@@ -630,8 +633,7 @@ def resolve_action_mechanics(action_type, ability_name, initiator_name, target_n
         role_type = "防御方 (判定目标抗打击度或破解难度/DC)" if is_defense else "发起方 (判定其侵袭烈度 or 出力 Base)"
         client = get_user_client()
         if not client:
-            yield "【系统提示】：请先在左侧边栏配置正确的 DeepSeek API Key。"
-            return
+            return entity_name or "环境", 15
         try:
             response = client.chat.completions.create(
                 model=MODEL_FLASH,
@@ -834,8 +836,7 @@ def sync_dynamic_status(rendered_text, target_name, major_graph, pc_name="主角
     
     client = get_user_client()
     if not client:
-        yield "【系统提示】：请先在左侧边栏配置正确的 DeepSeek API Key。"
-        return
+        return major_graph, {}
     try:
         response = client.chat.completions.create(
             model=MODEL_FLASH,
