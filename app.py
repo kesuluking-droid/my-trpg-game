@@ -125,9 +125,14 @@ if "current_file" not in st.session_state:
 if "minor_npcs" not in st.session_state:
     st.session_state.minor_npcs = {}
 
+
 # 1.1 先确保基础默认设定变量存在
+if "world_category" not in st.session_state:
+    st.session_state.world_category = "异能" # 默认大类
 if "world_tier" not in st.session_state:
     st.session_state.world_tier = DEFAULT_WORLD_TIER
+if "last_scaled_tier" not in st.session_state:
+    st.session_state.last_scaled_tier = st.session_state.get("world_tier", DEFAULT_WORLD_TIER)
 if "pc_name" not in st.session_state:
     st.session_state.pc_name = "主角"
 if "pc_template" not in st.session_state:
@@ -226,7 +231,13 @@ def settings_dialog():
     tab1, tab2, tab3, tab4 = st.tabs(["基本与状态", "初始能力", "先天特质", "初始背包"])
     
     with tab1:
-        new_tier = st.text_input("当前世界观定调", value=st.session_state.world_tier)
+        # 🟢 新增：7大类强制约束选单
+        categories = ["修仙", "魔法", "武侠", "异能", "现实", "科幻", "其他"]
+        cat_index = categories.index(st.session_state.world_category) if st.session_state.world_category in categories else 3
+        new_category = st.selectbox("世界观大类", categories, index=cat_index)
+        
+        # 保留原有 tier 变量接收具体设定
+        new_tier = st.text_input("具体世界观定调 (修改此项将触发跨界法则演算)", value=st.session_state.world_tier)
         new_pc_name = st.text_input("主角姓名", value=st.session_state.pc_name)
         new_desc = st.text_area("主角背景描述", value=st.session_state.pc_template.get("desc", "世界的变数"))
         
@@ -312,6 +323,9 @@ def settings_dialog():
     with col_btn1:
         if st.button("保存设定 (新建会话生效)", type="primary", use_container_width=True):
             try:
+                
+                # 更新基础状态变量
+                st.session_state.world_category = new_category
                 st.session_state.world_tier = new_tier
                 st.session_state.pc_name = new_pc_name
                 
@@ -401,39 +415,6 @@ def trigger_save():
 
 def render_sidebar_panel(major_graph):
     """侧边栏六维数据实时可视化面板"""
-    import streamlit as st
-    
-    with st.sidebar:
-        # ==========================================
-        # 🔑 新增：玩家 API 凭据配置箱 (必须置顶，防止被下方的 return 阻断)
-        # ==========================================
-        st.markdown("### 🔑 玩家 API 凭据")
-        st.caption("💡 游戏已接入云端。请在下方配置您个人的 DeepSeek API Key。您的 Key 仅在当前浏览器生效，绝不上传服务器。")
-        
-        # 初始化 session_state
-        if "user_api_key" not in st.session_state:
-            st.session_state.user_api_key = ""
-            
-        user_key_input = st.text_input(
-            "DeepSeek API Key:",
-            value=st.session_state.user_api_key,
-            type="password",
-            placeholder="sk-...",
-            help="请在此处粘贴您的 DeepSeek 官方 API 密钥"
-        )
-        
-        # 强校验是否符合 DeepSeek 密钥特征
-        if user_key_input:
-            if not user_key_input.startswith("sk-"):
-                st.error("⚠️ 警告：校验失败！请输入标准的 DeepSeek 官方 API 密钥 (以 sk- 开头)。")
-            else:
-                st.session_state.user_api_key = user_key_input
-                st.success("✅ DeepSeek API 凭据已成功挂载！")
-        else:
-            st.warning("🛑 提示：未检测到个人 API Key，系统当前正处于未授权停机状态。")
-            
-        st.divider()
-        # ==========================================
         
     with st.sidebar:
         st.header("实时状态与核心图谱")
@@ -579,6 +560,36 @@ def render_sidebar_panel(major_graph):
 
 # 2. 侧边栏 UI
 with st.sidebar:
+    # ==========================================
+    # 🔑 新增：玩家 API 凭据配置箱 (必须置顶，防止被下方的 return 阻断)
+    # ==========================================
+    st.markdown("### 🔑 玩家 API 凭据")
+    st.caption("💡 游戏已接入云端。请在下方配置您个人的 DeepSeek API Key。您的 Key 仅在当前浏览器生效，绝不上传服务器。")
+    
+    # 初始化 session_state
+    if "user_api_key" not in st.session_state:
+        st.session_state.user_api_key = ""
+        
+    user_key_input = st.text_input(
+        "DeepSeek API Key:",
+        value=st.session_state.user_api_key,
+        type="password",
+        placeholder="sk-...",
+        help="请在此处粘贴您的 DeepSeek 官方 API 密钥"
+    )
+    
+    # 强校验是否符合 DeepSeek 密钥特征
+    if user_key_input:
+        if not user_key_input.startswith("sk-"):
+            st.error("⚠️ 警告：校验失败！请输入标准的 DeepSeek 官方 API 密钥 (以 sk- 开头)。")
+        else:
+            st.session_state.user_api_key = user_key_input
+            st.success("✅ DeepSeek API 凭据已成功挂载！")
+    else:
+        st.warning("🛑 提示：未检测到个人 API Key，系统当前正处于未授权停机状态。")
+        
+    st.divider()
+    # ==========================================
     st.subheader("会话控制")
     chat_files = memory_manager.get_chat_files()
     
@@ -604,7 +615,24 @@ with st.sidebar:
         st.session_state.gm_memory = []
         trigger_save()
         st.rerun()
-
+    
+    st.caption("⚠️ 注意：重载前，务必先在游戏设置定制中选择好世界观大类并保存！")    
+    if st.button("重载世界观威力表", type="secondary", use_container_width=True):
+        with st.spinner("正在重载世界法则并重塑资产..."):
+            success, anchor_data, updated_graph, msg = core_engine.sync_world_anchor_and_scale(
+                category=st.session_state.get("world_category", "异能"),
+                new_setting_name=st.session_state.world_tier,
+                old_setting_name=st.session_state.get("last_scaled_tier"),
+                major_graph=st.session_state.major_graph
+            )
+            if success:
+                st.session_state.major_graph = updated_graph
+                st.session_state.last_scaled_tier = st.session_state.world_tier
+                trigger_save()
+                st.success(f"重载成功: {msg}")
+            else:
+                st.error(f"重载失败: {msg}")
+    
     if chat_files:
         if not st.session_state.current_file or st.session_state.current_file not in chat_files:
             st.session_state.current_file = chat_files[0]
@@ -819,6 +847,21 @@ if user_input:
                             st.session_state.scene_index
                         )
                     
+                    # 幕间自动检测世界观跃迁
+                    if st.session_state.world_tier != st.session_state.get("last_scaled_tier"):
+                        success, anchor_data, updated_graph, msg = core_engine.sync_world_anchor_and_scale(
+                            category=st.session_state.get("world_category", "异能"),
+                            new_setting_name=st.session_state.world_tier,
+                            old_setting_name=st.session_state.get("last_scaled_tier"),
+                            major_graph=st.session_state.major_graph
+                        )
+                        if success:
+                            st.session_state.major_graph = updated_graph
+                            st.session_state.last_scaled_tier = st.session_state.world_tier
+                            st.toast(f"跨界清算完毕: {msg}")
+                        else:
+                            st.error(f"世界重塑失败，请稍后手动点击重载按钮。原因: {msg}")
+                    
                     # 步进时空，物理清空活跃场景
                     st.session_state.scene_index += 1
                     st.session_state.active_scene = st.session_state.active_scene[-3:]
@@ -872,6 +915,11 @@ if user_input:
                                 target, st.session_state.active_scene, st.session_state.major_graph, st.session_state.world_tier
                             )
 
+                        anchor_text = core_engine.get_current_world_anchor_text(
+                            st.session_state.world_category, 
+                            st.session_state.world_tier
+                        )
+
                         system_injection = core_engine.resolve_action_mechanics(
                             action_type, 
                             ability, 
@@ -880,7 +928,7 @@ if user_input:
                             target_ongoing,
                             st.session_state.major_graph,
                             st.session_state.gm_memory,
-                            st.session_state.world_tier,
+                            anchor_text,  # 🟢 替换：现在传进去的是完整的一大段法则文本！
                             intent.get("initiator_matched_assets", []),
                             intent.get("target_matched_assets", [])
                         )
@@ -926,7 +974,12 @@ if user_input:
                         if perceived_text.strip() and len(assistant_reply.strip()) > 2:
                             with st.spinner("系统感知到剧情突变，动态图谱落盘中..."):
                                 st.session_state.major_graph, raw_json = core_engine.sync_dynamic_status(
-                                    perceived_text, sync_target, st.session_state.major_graph, st.session_state.pc_name
+                                    perceived_text, 
+                                    sync_target, 
+                                    st.session_state.major_graph, 
+                                    st.session_state.active_scene,            # 🟢 漏掉的传参补齐
+                                    st.session_state.get("active_stage", []), # 🟢 漏掉的传参补齐
+                                    st.session_state.pc_name
                                 )
                                 if raw_json:
                                     st.session_state.sync_log.append({
@@ -943,7 +996,12 @@ if user_input:
                         if assistant_reply and len(assistant_reply.strip()) > 2:
                             with st.spinner("战后伤情与状态落盘中..."):
                                 st.session_state.major_graph, raw_json_combat = core_engine.sync_dynamic_status(
-                                        assistant_reply, target, st.session_state.major_graph, st.session_state.pc_name
+                                        assistant_reply, 
+                                        target, 
+                                        st.session_state.major_graph,
+                                        st.session_state.active_scene,            # 🟢 漏掉的传参补齐
+                                        st.session_state.get("active_stage", []), # 🟢 漏掉的传参补齐
+                                        st.session_state.pc_name
                                     )
                                 # 顺手把战后状态也记入你的新日志系统
                                 if raw_json_combat:
