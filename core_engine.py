@@ -6,6 +6,7 @@ from openai import OpenAI
 from config import MODEL_PRO, MODEL_FLASH, API_BASE_URL, DEBUG_MODE
 import config
 import random
+import streamlit as st
 
 # ==========================================
 # 🛑 云端自动基建算子 (无中生有版)
@@ -1157,6 +1158,75 @@ def sync_dynamic_status(rendered_text, target_name, major_graph, pc_name="主角
     raw_sync_json = result if 'result' in locals() else {}
     return major_graph, raw_sync_json
 
+
+# --- 存档物理销毁与重命名算子 ---
+
+def rename_user_session(old_file_name, new_name):
+    """将指定的存档文件及伴生 GM 存档安全重命名"""
+    current_user = st.session_state.get("current_user")
+    if not current_user or not old_file_name:
+        return False, "用户未登录或未选择有效存档。"
+        
+    new_name = new_name.strip()
+    if not new_name:
+        return False, "新名字不能为空。"
+        
+    # 强御安全清洗：确保用户没自己输入 .json，统一后缀格式
+    if not new_name.endswith(".json"):
+        new_name += ".json"
+        
+    user_dir = os.path.join(config.SAVE_DIR, current_user)
+    gm_dir = os.path.join(user_dir, "gm_data")
+    
+    old_path = os.path.join(user_dir, old_file_name)
+    new_path = os.path.join(user_dir, new_name)
+    
+    # 边界检测：防止重名覆盖
+    if os.path.exists(new_path):
+        return False, "已存在同名存档，请更换名字。"
+        
+    try:
+        # 1. 物理重命名主线故事 JSON
+        if os.path.exists(old_path):
+            os.rename(old_path, new_path)
+            
+        # 2. 物理重命名伴生 GM 裁判 JSON
+        old_gm_file = old_file_name.replace(".json", "_gm.json")
+        new_gm_file = new_name.replace(".json", "_gm.json")
+        old_gm_path = os.path.join(gm_dir, old_gm_file)
+        new_gm_path = os.path.join(gm_dir, new_gm_file)
+        
+        if os.path.exists(old_gm_path):
+            os.rename(old_gm_path, new_gm_path)
+            
+        return True, new_name
+    except Exception as e:
+        return False, f"物理重命名失败: {str(e)}"
+
+
+def delete_user_session(file_name):
+    """物理粉碎指定的存档文件及伴生 GM 存档"""
+    current_user = st.session_state.get("current_user")
+    if not current_user or not file_name:
+        return False, "用户未登录或未选择有效存档。"
+        
+    user_dir = os.path.join(config.SAVE_DIR, current_user)
+    gm_dir = os.path.join(user_dir, "gm_data")
+    
+    file_path = os.path.join(user_dir, file_name)
+    gm_file = file_name.replace(".json", "_gm.json")
+    gm_path = os.path.join(gm_dir, gm_file)
+    
+    try:
+        # 物理粉碎主档
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        # 物理粉碎伴生 GM 档
+        if os.path.exists(gm_path):
+            os.remove(gm_path)
+        return True, "存档已安全粉碎。"
+    except Exception as e:
+        return False, f"物理物理删除失败: {str(e)}"
 
 if __name__ == "__main__":
     print("测试 Core Engine 流式输出 (PRO)...")

@@ -650,6 +650,44 @@ with st.sidebar:
                     # 将旧的面板数据提取出来，赋予新的自定义名字，并删掉旧的 "主角"
                     st.session_state.major_graph["entities"][st.session_state.pc_name] = st.session_state.major_graph["entities"].pop("主角")
 
+        st.markdown("---")
+        
+        with st.expander("✏️ 修改当前剧本名字"):
+            current_pure_name = st.session_state.current_file.replace(".json", "")
+            new_session_name = st.text_input("输入新剧本名", value=current_pure_name, key="rename_input")
+            
+            if st.button("确认重命名", use_container_width=True):
+                if new_session_name.strip() != current_pure_name:
+                    success, result = core_engine.rename_user_session(st.session_state.current_file, new_session_name)
+                    if success:
+                        st.session_state.current_file = result # 指针切到新文件
+                        st.success("重命名成功！")
+                        st.rerun()
+                    else:
+                        st.error(result)
+
+        with st.expander("🗑️ 危险：粉碎当前剧本"):
+            st.warning("⚠️ 物理删除后，该世界线将永久消失，无法恢复！")
+            confirm_delete = st.checkbox("我已熟知风险，确认粉碎", key="del_confirm_check")
+            
+            if st.button("🔥 物理粉碎当前对话", use_container_width=True, disabled=not confirm_delete):
+                success, msg = core_engine.delete_user_session(st.session_state.current_file)
+                if success:
+                    # 删除成功后，彻底清空当前内存，逼迫网页刷新后自动重新创建一个空剧本
+                    st.session_state.current_file = ""
+                    st.session_state.history_archive = []
+                    st.session_state.active_scene = []
+                    st.session_state.memory = ""
+                    st.session_state.minor_npcs = {}
+                    st.session_state.graveyard = {}
+                    st.session_state.scene_index = 1
+                    st.session_state.major_graph = {"entities": {st.session_state.pc_name: copy.deepcopy(DEFAULT_PC)}, "relations": []}
+                    st.success("该世界线已被抹除！")
+                    st.rerun()
+                else:
+                    st.error(msg)
+
+
     st.write("---")
     st.subheader("外置记忆库")
     new_memory = st.text_area("全局背景/长期设定", value=st.session_state.memory, height=300)
@@ -675,47 +713,6 @@ with st.sidebar:
         st.session_state.active_stage = []
         st.caption("注：转场时系统将根据张力自动抽取NPC注入暗线。")
     
-    # 🎬 核心按钮：结束当前幕并转场
-# =============================================================================
-#     if st.button("🎬 结束当前幕并转场", use_container_width=True):
-#         if st.session_state.active_scene:
-#             with st.spinner("结算本幕剧情与人物权重..."):
-#                 try:
-#                     # 1. 提炼当前幕
-#                     extracted_data = core_engine.extract_memory_summary(st.session_state.active_scene, st.session_state.scene_index)
-#                     
-#                     # 2. 追加摘要，记录发生地点
-#                     location = extracted_data.get("current_location", "未知区域")
-#                     st.session_state.memory += f"\n\n[第{st.session_state.scene_index}幕摘要 | {location}]: {extracted_data['summary']}"
-#                     
-#                     # 3. 结算人物 (注意：这里必须传入完整的 extracted_data 和 scene_index)
-#                     (st.session_state.minor_npcs, st.session_state.major_graph, 
-#                      st.session_state.graveyard) = memory_manager.process_npc_updates(
-#                         extracted_data, 
-#                         st.session_state.minor_npcs,
-#                         st.session_state.major_graph,
-#                         st.session_state.graveyard,
-#                         st.session_state.scene_index
-#                     )
-#                          
-#                     # 生成下一幕暗线指令
-#                     current_tension = extracted_data.get("current_tension", 5)
-#                     st.session_state.director_directive = core_engine.generate_narrative_directive(
-#                         current_tension, 
-#                         st.session_state.major_graph,
-#                         st.session_state.active_stage
-#                     )
-#                     
-#                     # 4. 幕次自增与清空工作区 (向后推进的核心)
-#                     st.session_state.scene_index += 1
-#                     st.session_state.active_scene = []
-#                     
-#                     trigger_save() 
-#                     st.success("转场完成！引擎上下文已清空，即将开启下一幕。")
-#                 except Exception as e:
-#                     st.error(f"提取结算失败: {e}")
-#             st.rerun()
-# =============================================================================
 
 # 3. 主界面 UI
 col_main, _ = st.columns([8, 2])
