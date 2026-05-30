@@ -77,6 +77,62 @@ def modify_password(username, old_password, new_password):
 
 
 # ======== 全局宏观战力锚定设置 ============
+def _match_world_anchor_references(new_setting_name: str, threshold: float = 0.75, top_n: int = 10, per_category_top_n: int = 3):
+    """
+    从全部已登记世界观中检索与玩家具体世界观最相近的参考样本。
+    返回: (best_category, selected_rows, debug_msg)
+    """
+    try:
+        from ability_matcher import compute_similarity
+    except Exception as e:
+        return None, [], f"语义匹配模块不可用：{e}"
+
+    try:
+        res = db_client.table("world_anchors_pool").select("category, setting_name, anchor_data").execute()
+        rows = res.data or []
+    except Exception as e:
+        return None, [], f"世界观样本库读取失败：{e}"
+
+    scored = []
+    for row in rows:
+        setting_name = str(row.get("setting_name", "")).strip()
+        category = str(row.get("category", "")).strip()
+        anchor_data = row.get("anchor_data", {}) or {}
+        if not setting_name or not category:
+            continue
+
+        # 既看具体世界名，也看锚点描述，避免只靠标题导致误判。
+        anchor_text = json.dumps(anchor_data, ensure_ascii=False)
+        candidate_text = f"{category} / {setting_name}\n{anchor_text}"
+        score = compute_similarity(new_setting_name, candidate_text)
+        if score > threshold:
+            scored.append({
+                "category": category,
+                "setting_name": setting_name,
+                "anchor_data": anchor_data,
+                "score": score,
+            })
+
+    if not scored:
+        return None, [], f"没有找到相似度超过 {threshold:.2f} 的世界观参考。"
+
+    top_matches = sorted(scored, key=lambda item: item["score"], reverse=True)[:top_n]
+
+    category_scores = {}
+    for item in top_matches:
+        category_scores.setdefault(item["category"], []).append(item["score"])
+
+    best_category = max(
+        category_scores.items(),
+        key=lambda kv: (sum(kv[1]) / len(kv[1]), len(kv[1]))
+    )[0]
+
+    selected_rows = [item for item in top_matches if item["category"] == best_category][:per_category_top_n]
+    avg_score = sum(category_scores[best_category]) / len(category_scores[best_category])
+    debug_msg = f"匹配大类：{best_category}，均值相似度 {avg_score:.3f}，参考样本 {len(selected_rows)} 个。"
+    return best_category, selected_rows, debug_msg
+
+
 def sync_world_anchor_and_scale(category: str, new_setting_name: str, old_setting_name: str = None, major_graph: dict = None):
     """
     【世界法则枢纽】：负责查表、创世建表、以及跨界资产缩放。
@@ -97,14 +153,31 @@ def sync_world_anchor_and_scale(category: str, new_setting_name: str, old_settin
     # 2. 未命中：触发【创世建表】协议
     print(f"[世界引擎] 未知世界，触发大模型创世建表协议...")
     
-    # 获取同大类参考样本 (动态 Few-Shot)
+    # 2.1 全库语义匹配：自动推断最相近大类，并抽取该大类 Top3 参考样本
     ref_texts = []
+    match_msg = ""
     try:
-        refs = db_client.table("world_anchors_pool").select("setting_name, anchor_data").eq("category", category).limit(3).execute()
-        ref_texts = [f"参考世界[{r['setting_name']}]:\n{json.dumps(r['anchor_data'], ensure_ascii=False)}" for r in refs.data]
+        matched_category, matched_refs, match_msg = _match_world_anchor_references(new_setting_name)
+        if matched_category:
+            category = matched_category
+            if "st" in globals():
+                st.session_state.world_category = matched_category
+        ref_texts = [
+            f"参考世界[{r['setting_name']}]（相似度 {r['score']:.3f}，大类 {r['category']}）:\n{json.dumps(r['anchor_data'], ensure_ascii=False)}"
+            for r in matched_refs
+        ]
+    except Exception as e:
+        match_msg = f"语义匹配失败，回退到常识生成：{e}"
+    references_str = "\n\n".join(ref_texts) if ref_texts else "暂无高相似参考，请根据常识与大类基调自由发挥。"
+
+    # 如果语义匹配切换了大类，而该大类下已有精确缓存，则直接复用，避免重复建表。
+    try:
+        rematch_existing = db_client.table("world_anchors_pool").select("anchor_data").eq("category", category).eq("setting_name", new_setting_name).execute()
+        if rematch_existing.data:
+            print(f"[世界引擎] 语义匹配后命中精确缓存：{category} / {new_setting_name}")
+            return True, rematch_existing.data[0]["anchor_data"], major_graph, f"已自动匹配大类【{category}】，并从缓存载入世界法则。"
     except Exception:
         pass
-    references_str = "\n\n".join(ref_texts) if ref_texts else "暂无同类参考，请根据常识与大类基调自由发挥。"
 
     # 获取旧世界法则 (用于计算跨界折算系数)
     old_anchor_text = "无旧世界参考（视为从零开局）"
@@ -122,7 +195,8 @@ def sync_world_anchor_and_scale(category: str, new_setting_name: str, old_settin
 玩家进入了一个全新的【{category}】大类世界。
 新世界具体设定：【{new_setting_name}】
 
-【同大类参考样本库】（仅供行文格式参考，需结合新设定重新定调）：
+【相似世界观参考样本库】（由全库语义匹配筛选，仅供战力尺度参考，需结合新设定重新定调）：
+匹配说明：{match_msg}
 {references_str}
 
 【跨界战力折算系统】
@@ -475,7 +549,7 @@ def build_context(memory, active_stage_names, latest_input, major_graph, minor_n
     return context_text
 
 
-def generate_chat_stream(context_text, active_scene):
+def generate_chat_stream(context_text, active_scene, override_tail=None):
     """流式对话生成器（使用 PRO 模型）- 带网络防断流装甲版"""
     if DEBUG_MODE:
         time.sleep(0.5)
@@ -490,6 +564,11 @@ def generate_chat_stream(context_text, active_scene):
 
     # 【新增】：尾部强注入协议
     tail_instruction = "【最高执行协议】：若本次回复推演导致任何角色身心状态、特质、重要物品发生重大非战斗性转变（身心状态如大喜大悲、心神不宁、顿悟洗心革面等，特质比如吃下宝物导致百毒不侵等、重要物品比如丢失、意外获得利器），必须在回复最末尾独立一行输出 `<STATUS_UPDATE: 角色名>`。若无重大转变，绝对不要输出此标记。"
+
+    # 如果有校验覆盖指令，追加到尾部（最高优先级，紧贴对话内容）
+    if override_tail:
+        tail_instruction += f"\n{override_tail}"
+
     runtime_messages.append({"role": "system", "content": tail_instruction})
 
     # 【新增防御】：第一层 try，捕获初始连接失败或限流报错
@@ -529,10 +608,12 @@ def extract_memory_summary(messages, scene_index):
     system_prompt = f"""你是一个智能记忆管理引擎。当前是第 {scene_index} 幕。请执行：
     1. 总结核心要点，评估戏剧张力（0-10），并提取本幕主要【发生地点】。
     2. 抓取所有出场角色，记录其本幕交互。
+    3. 生成“幕间推进”：让世界在幕间自然向前推进一小步，并给下一幕留下开场钩子。
     
     【最高指令：六维数据保护与命名协议】
     1. 数值保护：角色的武功、状态、物品等数值已处理完毕。你【绝对不可】在 base_desc 中编造武功数值。
     2. 命名强制规则：如果剧情中出现了没有名字的NPC（如：女军官、大夫、门房），请直接用其【显著特征或职业】作为 name（如："女军官"）。绝对严禁将NPC的名字误填为主角的名字！
+    3. 幕间推进只用于叙事推进与下一幕钩子，严禁在其中新增能力、物品、数值变化或确定隐藏真相。NPC幕间动作必须是可观察或可被传闻感知的表层行动。
 
     返回纯JSON格式：
     {{
@@ -553,7 +634,15 @@ def extract_memory_summary(messages, scene_index):
                 }}
             }}
         ],
-        "relation_updates": []
+        "relation_updates": [],
+        "interlude_progression": {{
+            "time_skip": "片刻后/一夜之后/数日后/与此同时",
+            "progression": "幕间发生的局势推进，体现时间流逝、后果发酵或阵营动作。",
+            "npc_moves": ["已知NPC在幕间采取的可观察行动或传闻"],
+            "next_hook": "下一幕开场钩子，让玩家进入下一幕时有明确可响应的事件。",
+            "recommended_location": "下一幕推荐地点",
+            "tone": "喘息/悬疑/危机/追击/日常"
+        }}
     }}"""
     client = get_user_client()
     if not client:
@@ -562,7 +651,8 @@ def extract_memory_summary(messages, scene_index):
             "current_location": "未知", 
             "current_tension": 0, 
             "npc_updates": [], 
-            "relation_updates": []
+            "relation_updates": [],
+            "interlude_progression": {}
         }
     try:
         response = client.chat.completions.create(
@@ -585,7 +675,7 @@ def extract_memory_summary(messages, scene_index):
         if 'raw_content' in locals():
             print(f"[引擎警告] 大模型原始输出: {raw_content}\n")
             
-        return {"summary": "提取失败。", "current_location": "未知", "current_tension": 0, "npc_updates": [], "relation_updates": []}
+        return {"summary": "提取失败。", "current_location": "未知", "current_tension": 0, "npc_updates": [], "relation_updates": [], "interlude_progression": {}}
 def generate_narrative_directive(current_tension, major_graph, manual_targets=None):
     if manual_targets is None:
         manual_targets = []
@@ -739,6 +829,23 @@ def init_npc_combat_stats(target_name, active_scene, major_graph, world_anchor_t
     existing_desc = npc_data.get("desc", "暂无历史设定，属于剧情首次登场的全新人物。请根据上下文合理推断设定。")
     existing_tags = npc_data.get("tags", ["NPC"])
 
+    # 提取已知角色名列表（用于关系推断）
+    known_entities = list(major_graph.get("entities", {}).keys())
+    known_entities_str = "、".join(known_entities) if known_entities else "无"
+
+    # 判断是否是玩家主角：主角严格约束，NPC 自由揣测
+    is_player = (target_name in known_entities and "玩家" in major_graph["entities"].get(target_name, {}).get("tags", []))
+    if is_player:
+        capability_constraint = (
+            "- 【严格约束 - 玩家主角】3_capabilities 中只允许填入近期剧情上下文中该角色**实际使用或被提及**的能力/招式。"
+            "严禁凭空编造剧情中从未出现过的技能。如果上下文中没有描述任何具体招式，只填写一个「基础应对」作为兜底。"
+        )
+    else:
+        capability_constraint = (
+            "- 【NPC 自由揣测】根据该角色的身份、名望和世界观基调，合理推断其可能掌握的全部技能树。"
+            "NPC 作为独立存在的个体，应当拥有与其身份匹配的完整能力配置。"
+        )
+
     system_prompt = f"""你是一个 TRPG 的动态实体生成与资产补全引擎 (Game Master)。
 【当前宇宙法则与威力比例尺】
 {world_anchor_text}
@@ -748,17 +855,23 @@ def init_npc_combat_stats(target_name, active_scene, major_graph, world_anchor_t
 基础已知设定：{existing_desc}
 基础身份标签：{existing_tags}
 
+【已存在的角色】
+{known_entities_str}
+
 【近期剧情上下文】
 {recent_context}
 
 【任务协议】
 请根据该角色在剧情和世界观中的实际生态位与名望，推导其合理的背景描述、身份标签、掌握功法/能力以及当前的身心状态。
 - 能力基础物理威力 (base_power) 必须严格对照基准：市井凡人/流氓 (10-20)；熟练老手/精英 (50-70)；绝世高手/宗师 (90-120+)。熟练度 (mastery_level) 默认填 1.0。
+- 如果目标与已存在角色（特别是玩家主角）有明确的关系（如兄弟、仇敌、主仆等），必须在 relational_facts 中记录。
+{capability_constraint}
 
 必须返回纯 JSON 格式，结构严格对齐系统底盘：
 {{
     "desc": "基于剧情与知名度提炼的一段客观中立的NPC背景描述",
     "tags": ["NPC", "阵营或身份标签"],
+    "relational_facts": {{"已知角色名": "与该角色的关系描述"}},
     "3_capabilities": {{
         "核心招式名": {{"domains": ["战斗", "技术类型"], "base_power": 105, "mastery_level": 1.0, "features": ["特性描写"]}}
     }},
@@ -785,7 +898,7 @@ def init_npc_combat_stats(target_name, active_scene, major_graph, world_anchor_t
             major_graph["entities"][target_name] = {
                 "desc": result.get("desc", "神秘莫测的人物"),
                 "tags": result.get("tags", ["NPC"]),
-                "1_relational_facts": {},
+                "1_relational_facts": result.get("relational_facts", {}),
                 "2_dynamic_status": result.get("2_dynamic_status", {}),
                 "3_capabilities": result.get("3_capabilities", {}),
                 "4_experience_factors": {"general_combat": 1.0, "specific_match": {}},
@@ -798,6 +911,10 @@ def init_npc_combat_stats(target_name, active_scene, major_graph, world_anchor_t
                 major_graph["entities"][target_name]["3_capabilities"] = result.get("3_capabilities", {})
             if not major_graph["entities"][target_name].get("2_dynamic_status"):
                 major_graph["entities"][target_name]["2_dynamic_status"] = result.get("2_dynamic_status", {})
+            # 补全关系（合并而非覆盖）
+            if result.get("relational_facts"):
+                major_graph["entities"][target_name].setdefault("1_relational_facts", {})
+                major_graph["entities"][target_name]["1_relational_facts"].update(result["relational_facts"])
                 
     except Exception:
         # 系统级异常兜底

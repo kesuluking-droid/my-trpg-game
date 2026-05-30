@@ -1,8 +1,33 @@
+# 运行时数据 / 用户隐私
 chat_history/
-*.bat
-.env
-__pycache__/
-*.pyc
-.streamlit/
-待实现需求.txt
 data/
+.env
+.streamlit/
+.uploads/
+attachments/
+
+# 本地缓存 / 依赖缓存
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.models/
+.cache/
+
+# 本地启动脚本 / 临时文件
+*.bat
+*.log
+*.tmp
+*.bak
+*.swp
+
+# 项目内个人草稿，不作为核心代码提交
+待实现需求.txt
+测试样例.txt
+newdesign.txt
+
+# 本地沙盒开发入口 / 旧沙盒命名文件
+sandbox_app.py
+sandbox_core_engine.py
+sandbox_intent_parser.py
+sandbox_integration.py

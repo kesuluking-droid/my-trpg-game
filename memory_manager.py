@@ -1,17 +1,40 @@
 import json
 import os
+import time
 import config
 import streamlit as st
-from supabase import create_client, Client # 🟢 修正点1：引入正确的客户端类，彻底移除 import supabase 避免命名冲突
+from supabase import create_client, Client
 
-# --- 🚀 激活 Supabase 官方直连通道 ---
+# --- 🚀 激活 Supabase 官方直连通道（含自动重连） ---
 @st.cache_resource
-def get_supabase_client() -> Client:
+def _create_supabase_client() -> Client:
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
 
-db_client = get_supabase_client() # 🟢 修正点2：实例化为 db_client 变量，彻底断绝对齐漏洞
+def get_supabase_client() -> Client:
+    """获取 Supabase 客户端，连接断开时自动重建。"""
+    try:
+        client = _create_supabase_client()
+        # 轻量级心跳检测：执行一个最小查询验证连接存活
+        client.table("user_sessions").select("file_name", count="exact").limit(1).execute()
+        return client
+    except Exception:
+        # 连接已死，清除缓存强制重建
+        st.cache_resource.clear()
+        return _create_supabase_client()
+
+db_client = None  # 延迟初始化，每次调用时获取最新客户端
+
+def _get_db():
+    """获取数据库客户端（每次调用时验证连接）。"""
+    global db_client
+    try:
+        db_client = get_supabase_client()
+        return db_client
+    except Exception as e:
+        print(f"[严重错误] Supabase 重连失败: {e}")
+        return None
 
 def get_chat_files():
     current_user = st.session_state.get("current_user")
@@ -19,11 +42,12 @@ def get_chat_files():
         return []
         
     try:
-        # 全线改用 db_client.table
-        res = db_client.table("user_sessions").select("file_name").eq("username", current_user).order("updated_at", desc=True).execute()
+        db = _get_db()
+        if not db:
+            return []
+        res = db.table("user_sessions").select("file_name").eq("username", current_user).order("updated_at", desc=True).execute()
         return [item["file_name"] for item in res.data if item["file_name"] != "major_graph.json"]
     except Exception as e:
-        # 🟢 健壮性增强：升级为高亮严重报错，严禁默默 pass
         print(f"[严重错误] 获取云端存档列表物理失败。底层原因: {e}")
         return []
 
@@ -53,8 +77,10 @@ def save_session(file_name, memory, history_archive, active_scene, minor_npcs, m
     }
     
     try:
-        # 🟢 修正点4：改用 db_client.table 完美同步云端
-        db_client.table("user_sessions").upsert({
+        db = _get_db()
+        if not db:
+            return
+        db.table("user_sessions").upsert({
             "username": current_user,
             "file_name": file_name,
             "session_data": data,
@@ -93,8 +119,10 @@ def load_session(file_name):
         return default_return
         
     try:
-        # 改用 db_client.table 拉取数据
-        res = db_client.table("user_sessions").select("session_data", "gm_data").eq("username", current_user).eq("file_name", file_name).execute()
+        db = _get_db()
+        if not db:
+            return default_return
+        res = db.table("user_sessions").select("session_data", "gm_data").eq("username", current_user).eq("file_name", file_name).execute()
         
         if not res.data:
             return default_return
