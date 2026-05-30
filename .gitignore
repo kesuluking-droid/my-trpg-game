@@ -31,3 +31,4 @@ sandbox_app.py
 sandbox_core_engine.py
 sandbox_intent_parser.py
 sandbox_integration.py
+rules/sandbox_composite_adjudicator.py

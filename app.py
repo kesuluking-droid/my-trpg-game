@@ -194,6 +194,8 @@ if "user_api_key" not in st.session_state:
     st.session_state.user_api_key = ""
 if "show_control_settings" not in st.session_state:
     st.session_state.show_control_settings = False
+if "show_current_world_settings" not in st.session_state:
+    st.session_state.show_current_world_settings = False
 if "api_intro_shown" not in st.session_state:
     st.session_state.api_intro_shown = False
 if "dev_debug_mode" not in st.session_state:
@@ -261,6 +263,7 @@ def settings_dialog():
             for k, v in st.session_state.pc_template.get("4_experience_factors", {}).get("specific_match", {}).items()
         ]
         st.session_state.settings_saved_status = False
+        st.session_state.edit_world_memory = st.session_state.memory
         st.session_state.dialog_initialized = True
 
     tab1, tab2, tab3, tab4 = st.tabs(["基本与状态", "初始能力", "先天特质", "初始背包"])
@@ -275,7 +278,7 @@ def settings_dialog():
         new_tier = st.text_input("具体世界观定调 (修改此项将触发跨界法则演算)", value=st.session_state.world_tier)
         new_pc_name = st.text_input("主角姓名", value=st.session_state.pc_name)
         new_desc = st.text_area("主角背景描述", value=st.session_state.pc_template.get("desc", "世界的变数"))
-        new_memory = st.text_area("📚 世界记忆", value=st.session_state.memory, height=160, help="记录长期背景、世界规则、主角过往等。")
+        st.text_area("📚 世界记忆", key="edit_world_memory", height=160, help="记录长期背景、世界规则、主角过往等。")
 
         current_tags = ", ".join(st.session_state.pc_template.get("tags", ["玩家"]))
         new_tags_str = st.text_input("角色身份标签 (英文逗号分隔)", value=current_tags)
@@ -360,13 +363,8 @@ def settings_dialog():
         if st.button("保存设定 (新建会话生效)", type="primary", use_container_width=True):
             try:
 
-                # 更新基础状态变量
-                st.session_state.world_category = new_category
-                st.session_state.world_tier = new_tier
-                st.session_state.pc_name = new_pc_name
-                st.session_state.memory = new_memory
-
-                template = st.session_state.pc_template
+                # 只暂存新世界草稿，不写入当前世界，避免污染旧世界存档。
+                template = copy.deepcopy(st.session_state.pc_template)
                 template["desc"] = new_desc
                 template["tags"] = new_tags
                 template["2_dynamic_status"]["physical"] = {"desc": p_desc, "multiplier": p_mult}
@@ -382,9 +380,17 @@ def settings_dialog():
                 template["5_traits"] = [{"name": t["name"].strip(), "target_domains": [d.strip() for d in t["domains"].split(",") if d.strip()], "multiplier": float(t["multiplier"])} for t in st.session_state.edit_traits if t["name"].strip()]
                 template["6_inventory"] = {v["name"].strip(): {"tags": [d.strip() for d in v["domains"].split(",") if d.strip()], "multiplier": float(v["multiplier"])} for v in st.session_state.edit_inv if v["name"].strip()}
 
+                st.session_state.pending_world_config = {
+                    "world_category": new_category,
+                    "world_tier": new_tier,
+                    "pc_name": new_pc_name,
+                    "memory": st.session_state.get("edit_world_memory", ""),
+                    "pc_template": template,
+                }
+
                 st.session_state.settings_saved_status = True
                 st.session_state.show_settings = True
-                st.toast("设定已暂存至底层模板")
+                st.toast("新世界设定已暂存，尚未影响当前世界")
                 st.rerun()
             except Exception as e:
                 st.error(f"保存失败: {e}")
@@ -400,11 +406,19 @@ def settings_dialog():
         st.success("设定保存成功，请点击下方按钮清空并重构当前会话")
 
         if st.button("立即新建会话并应用新设定", type="secondary", use_container_width=True):
+            pending_world = st.session_state.get("pending_world_config", {})
+            applied_pc_template = copy.deepcopy(pending_world.get("pc_template", st.session_state.pc_template))
+
+            st.session_state.world_category = pending_world.get("world_category", st.session_state.world_category)
+            st.session_state.world_tier = pending_world.get("world_tier", st.session_state.world_tier)
+            st.session_state.pc_name = pending_world.get("pc_name", st.session_state.pc_name)
+            st.session_state.memory = pending_world.get("memory", "")
+            st.session_state.pc_template = applied_pc_template
+
             new_file = f"chat_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             st.session_state.current_file = new_file
             st.session_state.active_scene = []
             st.session_state.history_archive = []
-            st.session_state.memory = ""
             st.session_state.minor_npcs = {}
             st.session_state.graveyard = {}
             st.session_state.director_directive = ""
@@ -416,7 +430,7 @@ def settings_dialog():
             st.session_state.gm_memory = []
 
             st.session_state.major_graph = {
-                "entities": {st.session_state.pc_name: copy.deepcopy(st.session_state.pc_template)},
+                "entities": {st.session_state.pc_name: copy.deepcopy(applied_pc_template)},
                 "relations": []
             }
 
@@ -424,6 +438,8 @@ def settings_dialog():
 
             st.session_state.settings_saved_status = False
             st.session_state.show_settings = False
+            if "pending_world_config" in st.session_state:
+                del st.session_state.pending_world_config
             if "dialog_initialized" in st.session_state:
                 del st.session_state.dialog_initialized
 
@@ -455,6 +471,13 @@ def control_settings_dialog():
             st.success("✅ DeepSeek API 已挂载。")
     else:
         st.warning("🛑 当前未检测到 API Key，游戏无法调用模型。")
+
+    st.divider()
+    st.markdown("### 🌐 当前世界设定")
+    st.caption("修改当前世界线的基础设定。与【新世界】不同，这会保存到当前世界线。")
+    if st.button("🌐 重塑当前世界", use_container_width=True):
+        st.session_state.show_current_world_settings = True
+        st.rerun()
 
     st.divider()
     st.markdown("### 🪽 上帝模式")
@@ -518,6 +541,66 @@ def control_settings_dialog():
     st.divider()
     if st.button("关闭设置", use_container_width=True):
         st.session_state.show_control_settings = False
+        st.rerun()
+
+
+@st.dialog("🌐 重塑当前世界")
+def current_world_settings_dialog():
+    st.caption("这里修改的是当前世界线。普通模式只允许修改基础设定；开发者调试模式下才允许编辑幕间隐藏信息。")
+    categories = ["修仙", "魔法", "武侠", "异能", "现实", "科幻", "其他"]
+    cat_index = categories.index(st.session_state.world_category) if st.session_state.world_category in categories else 3
+    memory_lines = st.session_state.memory.splitlines()
+    hidden_interlude_lines = [line for line in memory_lines if "幕间推进" in line]
+    visible_memory = "\n".join(line for line in memory_lines if "幕间推进" not in line)
+
+    current_category = st.selectbox("世界观大类", categories, index=cat_index, key="current_world_category_edit")
+    current_tier = st.text_input("具体世界观定调", value=st.session_state.world_tier, key="current_world_tier_edit")
+    current_memory = st.text_area("📚 世界记忆", value=visible_memory, height=220, key="current_world_memory_edit")
+
+    pc_entity = st.session_state.major_graph.get("entities", {}).get(st.session_state.pc_name, {})
+    current_desc = st.text_area("主角背景描述", value=pc_entity.get("desc", st.session_state.pc_template.get("desc", "世界的变数")), height=120, key="current_pc_desc_edit")
+
+    st.divider()
+    st.markdown("### 📖 幕间章节概述")
+    chapter_lines = [line for line in st.session_state.memory.splitlines() if "幕摘要" in line]
+    if chapter_lines:
+        st.text_area("章节概述（只读）", value="\n".join(chapter_lines), height=160, disabled=True)
+    else:
+        st.caption("暂无幕间章节概述。")
+
+    st.divider()
+    st.markdown("### 🎬 幕间隐藏信息")
+    if st.session_state.get("dev_debug_mode", False):
+        hidden_default = "\n".join(hidden_interlude_lines) or st.session_state.get("last_interlude_debug", "")
+        hidden_interlude = st.text_area(
+            "幕间隐藏信息（开发者可编辑）",
+            value=hidden_default,
+            height=160,
+            key="current_interlude_debug_edit"
+        )
+    else:
+        st.info("幕间隐藏信息可能包含高度剧透风险，只有开启开发者调试模式后才会显示和编辑。")
+        hidden_interlude = "\n".join(hidden_interlude_lines)
+
+    c1, c2 = st.columns(2)
+    if c1.button("🌐 保存当前世界设定", type="primary", use_container_width=True):
+        st.session_state.world_category = current_category
+        st.session_state.world_tier = current_tier
+        hidden_to_keep = hidden_interlude.strip()
+        st.session_state.memory = current_memory.rstrip()
+        if hidden_to_keep:
+            st.session_state.memory += "\n" + hidden_to_keep
+        if st.session_state.pc_name in st.session_state.major_graph.get("entities", {}):
+            st.session_state.major_graph["entities"][st.session_state.pc_name]["desc"] = current_desc
+        st.session_state.pc_template["desc"] = current_desc
+        if st.session_state.get("dev_debug_mode", False):
+            st.session_state.last_interlude_debug = hidden_to_keep.splitlines()[-1] if hidden_to_keep else ""
+        trigger_save()
+        st.toast("当前世界设定已保存")
+        st.rerun()
+
+    if c2.button("关闭", use_container_width=True):
+        st.session_state.show_current_world_settings = False
         st.rerun()
 
 # 包装存档功能（新增 scene_index）
@@ -1193,3 +1276,7 @@ if st.session_state.get("show_settings", False):
 if st.session_state.get("show_control_settings", False):
     st.session_state.show_control_settings = False
     control_settings_dialog()
+
+if st.session_state.get("show_current_world_settings", False):
+    st.session_state.show_current_world_settings = False
+    current_world_settings_dialog()
