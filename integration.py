@@ -39,7 +39,7 @@ DOORBELL_NARRATIVE_INSTRUCTION = (
     "- 角色的先天特质发生变动（觉醒新特质、特质被剥离等）\n"
     "- NPC 的人际羁绊/态度发生实质转变（结盟、背叛、仇恨加深等）\n"
     "- 物品的特质/属性发生变动（武器被附魔、毒药失效等，注意不是物品本身的得失）\n"
-    "若无以上变动，严禁输出该标记。\n"
+    "若无以上变动，严禁输出该标记。该标记是系统内部控制符，除精确输出 `[STATE_CHANGED]` 外，严禁输出“状态变动”“状态更新”“图谱同步”等解释性文字。\n"
 )
 
 
@@ -49,6 +49,27 @@ def _strip_state_changed_marker(text: str) -> tuple[str, bool]:
     cleaned = re.sub(r"\s*\[STATE_CHANGED\]\s*", "", text).strip()
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned, triggered
+
+
+def _strip_hidden_control_text(text: str) -> str:
+    """移除不应展示给玩家的内部控制符和状态同步泄露行。"""
+    cleaned = re.sub(r"\s*\[STATE_CHANGED\]\s*", "", text or "")
+    cleaned = re.sub(r"\s*<STATUS_UPDATE:\s*.+?>\s*", "", cleaned)
+    cleaned = re.sub(
+        r"(?im)^\s*(状态变动|状态变化|状态更新|内部状态|图谱同步|同步状态)\s*[:：].*$",
+        "",
+        cleaned,
+    )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def append_narrative_length_instruction(context_text: str) -> str:
+    """给叙事生成上下文追加简洁输出约束，避免回复过长。"""
+    marker = "【叙事长度约束】"
+    if marker in (context_text or ""):
+        return context_text
+    return (context_text or "") + "\n【叙事长度约束】：本次正式叙事请尽量凝练，原则上不超过500字；只写玩家能看到的故事结果，不输出系统提示、状态变动说明或内部标记。\n"
 
 
 def _collect_entities_to_check(
@@ -410,16 +431,16 @@ def render_stream_and_commit(
 
     placeholder = st.empty()
     try:
-        # ---- 1. 流式接收完整响应 ----
+        # ---- 1. 完整缓存模型响应，不在原始流中暴露内部控制符 ----
         for chunk in raw_stream_generator:
             if chunk:
                 full_response += chunk
-            placeholder.markdown(full_response)
 
         if not full_response.strip():
             raise ValueError("空数据流")
 
-        display_response = full_response
+        display_response = _strip_hidden_control_text(full_response)
+        placeholder.markdown(display_response)
 
         # ---- 2. 机制检定警告展示 ----
         if parsed_intent and not enable_doorbell:
@@ -442,6 +463,7 @@ def render_stream_and_commit(
         doorbell_triggered = False
         if enable_doorbell:
             display_response, doorbell_triggered = _strip_state_changed_marker(full_response)
+            display_response = _strip_hidden_control_text(display_response)
             placeholder.markdown(display_response)
 
         # ---- 4. 落盘 working_graph ----
@@ -480,7 +502,7 @@ def render_stream_and_commit(
 
         # ---- 7. 旧系统 STATUS_UPDATE 同步（机制检定路径） ----
         if legacy_status_sync and display_response:
-            status_match = re.search(r'<STATUS_UPDATE:\s*(.+?)>', display_response)
+            status_match = re.search(r'<STATUS_UPDATE:\s*(.+?)>', full_response)
             if status_match:
                 legacy_sync_target = status_match.group(1).strip()
                 # 从文本中物理抹除标记

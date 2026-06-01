@@ -286,7 +286,7 @@ def generate_chat_stream(context_text, active_scene, override_tail=None):
     runtime_messages = [{"role": "system", "content": context_text}]
     runtime_messages.extend(active_scene)
 
-    tail_instruction = "【最高执行协议】：若本次回复推演导致任何角色身心状态、特质、重要物品发生重大非战斗性转变（身心状态如大喜大悲、心神不宁、顿悟洗心革面等，特质比如吃下宝物导致百毒不侵等、重要物品比如丢失、意外获得利器），必须在回复最末尾独立一行输出 `<STATUS_UPDATE: 角色名>`。若无重大转变，绝对不要输出此标记。"
+    tail_instruction = "【最高执行协议】：若本次回复推演导致任何角色身心状态、特质、重要物品发生重大非战斗性转变（身心状态如大喜大悲、心神不宁、顿悟洗心革面等，特质比如吃下宝物导致百毒不侵等、重要物品比如丢失、意外获得利器），必须在回复最末尾独立一行输出 `<STATUS_UPDATE: 角色名>`。若无重大转变，绝对不要输出此标记。该标记是系统内部控制符，不属于叙事内容，除精确标记外，严禁输出“状态变动”“状态更新”“图谱同步”等解释性文字。正式叙事请尽量凝练，原则上不超过500字。"
     if override_tail:
         tail_instruction += f"\n{override_tail}"
     runtime_messages.append({"role": "system", "content": tail_instruction})
