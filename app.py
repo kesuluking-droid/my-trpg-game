@@ -1,7 +1,7 @@
 # =============================================================================
-# 【正式版本】app.py
-# 基于已验证沙盒流程迁移的正式入口
-# 核心变更：常规回合的 else 分支已替换为 turn_engine 语义意图解析
+# 【沙盒版本】sandbox_app.py
+# 基于 app.py 的沙盒分支版本
+# 核心变更：常规回合的 else 分支已替换为 sandbox_core_engine 语义意图解析
 # 转场逻辑、登录注册、设置面板、侧边栏等其余代码完全保持原样
 # =============================================================================
 
@@ -13,9 +13,10 @@ st.title("Kesuluking-RPG")
 
 import datetime
 import re
-import memory_manager
-import core_engine
-import turn_engine
+import memory_manager as memory_manager
+import core_engine as core_engine
+import undo_manager as undo_manager
+from ui_feedback import get_friendly_status_text
 import copy
 import json
 import base64
@@ -194,8 +195,6 @@ if "user_api_key" not in st.session_state:
     st.session_state.user_api_key = ""
 if "show_control_settings" not in st.session_state:
     st.session_state.show_control_settings = False
-if "show_current_world_settings" not in st.session_state:
-    st.session_state.show_current_world_settings = False
 if "api_intro_shown" not in st.session_state:
     st.session_state.api_intro_shown = False
 if "dev_debug_mode" not in st.session_state:
@@ -473,13 +472,6 @@ def control_settings_dialog():
         st.warning("🛑 当前未检测到 API Key，游戏无法调用模型。")
 
     st.divider()
-    st.markdown("### 🌐 当前世界设定")
-    st.caption("修改当前世界线的基础设定。与【新世界】不同，这会保存到当前世界线。")
-    if st.button("🌐 重塑当前世界", use_container_width=True):
-        st.session_state.show_current_world_settings = True
-        st.rerun()
-
-    st.divider()
     st.markdown("### 🪽 上帝模式")
     if st.session_state.get("creative_mode", False):
         if st.button("🪽 关闭归还上帝权柄", use_container_width=True):
@@ -543,66 +535,6 @@ def control_settings_dialog():
         st.session_state.show_control_settings = False
         st.rerun()
 
-
-@st.dialog("🌐 重塑当前世界")
-def current_world_settings_dialog():
-    st.caption("这里修改的是当前世界线。普通模式只允许修改基础设定；开发者调试模式下才允许编辑幕间隐藏信息。")
-    categories = ["修仙", "魔法", "武侠", "异能", "现实", "科幻", "其他"]
-    cat_index = categories.index(st.session_state.world_category) if st.session_state.world_category in categories else 3
-    memory_lines = st.session_state.memory.splitlines()
-    hidden_interlude_lines = [line for line in memory_lines if "幕间推进" in line]
-    visible_memory = "\n".join(line for line in memory_lines if "幕间推进" not in line)
-
-    current_category = st.selectbox("世界观大类", categories, index=cat_index, key="current_world_category_edit")
-    current_tier = st.text_input("具体世界观定调", value=st.session_state.world_tier, key="current_world_tier_edit")
-    current_memory = st.text_area("📚 世界记忆", value=visible_memory, height=220, key="current_world_memory_edit")
-
-    pc_entity = st.session_state.major_graph.get("entities", {}).get(st.session_state.pc_name, {})
-    current_desc = st.text_area("主角背景描述", value=pc_entity.get("desc", st.session_state.pc_template.get("desc", "世界的变数")), height=120, key="current_pc_desc_edit")
-
-    st.divider()
-    st.markdown("### 📖 幕间章节概述")
-    chapter_lines = [line for line in st.session_state.memory.splitlines() if "幕摘要" in line]
-    if chapter_lines:
-        st.text_area("章节概述（只读）", value="\n".join(chapter_lines), height=160, disabled=True)
-    else:
-        st.caption("暂无幕间章节概述。")
-
-    st.divider()
-    st.markdown("### 🎬 幕间隐藏信息")
-    if st.session_state.get("dev_debug_mode", False):
-        hidden_default = "\n".join(hidden_interlude_lines) or st.session_state.get("last_interlude_debug", "")
-        hidden_interlude = st.text_area(
-            "幕间隐藏信息（开发者可编辑）",
-            value=hidden_default,
-            height=160,
-            key="current_interlude_debug_edit"
-        )
-    else:
-        st.info("幕间隐藏信息可能包含高度剧透风险，只有开启开发者调试模式后才会显示和编辑。")
-        hidden_interlude = "\n".join(hidden_interlude_lines)
-
-    c1, c2 = st.columns(2)
-    if c1.button("🌐 保存当前世界设定", type="primary", use_container_width=True):
-        st.session_state.world_category = current_category
-        st.session_state.world_tier = current_tier
-        hidden_to_keep = hidden_interlude.strip()
-        st.session_state.memory = current_memory.rstrip()
-        if hidden_to_keep:
-            st.session_state.memory += "\n" + hidden_to_keep
-        if st.session_state.pc_name in st.session_state.major_graph.get("entities", {}):
-            st.session_state.major_graph["entities"][st.session_state.pc_name]["desc"] = current_desc
-        st.session_state.pc_template["desc"] = current_desc
-        if st.session_state.get("dev_debug_mode", False):
-            st.session_state.last_interlude_debug = hidden_to_keep.splitlines()[-1] if hidden_to_keep else ""
-        trigger_save()
-        st.toast("当前世界设定已保存")
-        st.rerun()
-
-    if c2.button("关闭", use_container_width=True):
-        st.session_state.show_current_world_settings = False
-        st.rerun()
-
 # 包装存档功能（新增 scene_index）
 def trigger_save():
     memory_manager.save_session(
@@ -621,7 +553,8 @@ def trigger_save():
         st.session_state.get("sync_log", []),
         st.session_state.get("gm_memory", []),
         st.session_state.world_tier,
-        st.session_state.pc_name
+        st.session_state.pc_name,
+        _get_undo_stack()
     )
 
 
@@ -637,24 +570,21 @@ def _set_undo_stack(stack: list):
 
 
 def save_undo_snapshot():
-    """保存当前完整状态快照（用于撤回）。保留最近 20 步。"""
-    import copy
-    snapshot = {
-        "history_archive": copy.deepcopy(st.session_state.history_archive),
-        "active_scene": copy.deepcopy(st.session_state.active_scene),
-        "memory": st.session_state.memory,
-        "minor_npcs": copy.deepcopy(st.session_state.minor_npcs),
-        "major_graph": copy.deepcopy(st.session_state.major_graph),
-        "graveyard": copy.deepcopy(st.session_state.graveyard),
-        "director_directive": st.session_state.director_directive,
-        "scene_index": st.session_state.scene_index,
-        "tension_history": copy.deepcopy(st.session_state.get("tension_history", [])),
-        "current_location": st.session_state.get("current_location", "未知区域"),
-        "mechanics_log": copy.deepcopy(st.session_state.get("mechanics_log", [])),
-        "sync_log": copy.deepcopy(st.session_state.get("sync_log", [])),
-    }
+    """捕获当前状态作为后悔药 before，不再写入全量快照。"""
+    st.session_state["_undo_before_state"] = undo_manager.capture_undo_state(st.session_state)
+
+
+def commit_undo_snapshot(label="后悔药"):
+    """回合成功提交后，生成反向增量 patch 并写入撤回栈。"""
+    before = st.session_state.pop("_undo_before_state", None)
+    if before is None:
+        return
+    after = undo_manager.capture_undo_state(st.session_state)
+    entry = undo_manager.build_inverse_patch(before, after, label=label)
+    if not entry.get("patches"):
+        return
     undo_stack = _get_undo_stack()
-    undo_stack.append(snapshot)
+    undo_stack.append(entry)
     if len(undo_stack) > 20:
         del undo_stack[:len(undo_stack) - 20]
     _set_undo_stack(undo_stack)
@@ -667,20 +597,12 @@ def undo_last_turn():
         st.toast("没有可撤回的步骤")
         return False
 
-    snapshot = undo_stack.pop()
+    entry = undo_stack.pop()
     _set_undo_stack(undo_stack)
-    st.session_state.history_archive = snapshot["history_archive"]
-    st.session_state.active_scene = snapshot["active_scene"]
-    st.session_state.memory = snapshot["memory"]
-    st.session_state.minor_npcs = snapshot["minor_npcs"]
-    st.session_state.major_graph = snapshot["major_graph"]
-    st.session_state.graveyard = snapshot["graveyard"]
-    st.session_state.director_directive = snapshot["director_directive"]
-    st.session_state.scene_index = snapshot["scene_index"]
-    st.session_state.tension_history = snapshot["tension_history"]
-    st.session_state.current_location = snapshot["current_location"]
-    st.session_state.mechanics_log = snapshot["mechanics_log"]
-    st.session_state.sync_log = snapshot["sync_log"]
+    if undo_manager.is_patch_undo(entry):
+        undo_manager.apply_inverse_patch(st.session_state, entry)
+    else:
+        undo_manager.restore_legacy_snapshot(st.session_state, entry)
     trigger_save()
     return True
 
@@ -956,8 +878,10 @@ with st.sidebar:
              st.session_state.sync_log,
              st.session_state.gm_memory,
              st.session_state.world_tier,
-             st.session_state.pc_name
+             st.session_state.pc_name,
+             loaded_undo_stack
             ) = memory_manager.load_session(st.session_state.current_file)
+            _set_undo_stack(loaded_undo_stack)
             if st.session_state.pc_name != "主角":
                 if "主角" in st.session_state.major_graph.get("entities", {}):
                     # 将旧的面板数据提取出来，赋予新的自定义名字，并删掉旧的 "主角"
@@ -970,8 +894,14 @@ with st.sidebar:
 
             if st.button("📝 确认赐名", use_container_width=True):
                 if new_session_name.strip() != current_pure_name:
-                    success, result = core_engine.rename_user_session(st.session_state.current_file, new_session_name)
+                    old_file = st.session_state.current_file
+                    success, result = core_engine.rename_user_session(old_file, new_session_name)
                     if success:
+                        # 迁移 undo_stack 到新的 key
+                        old_key = f"undo_stack_{old_file}"
+                        new_key = f"undo_stack_{result}"
+                        if old_key in st.session_state:
+                            st.session_state[new_key] = st.session_state.pop(old_key)
                         st.session_state.current_file = result # 指针切到新文件
                         st.success("重命名成功！")
                         st.rerun()
@@ -997,8 +927,10 @@ with st.sidebar:
                  st.session_state.sync_log,
                  st.session_state.gm_memory,
                  st.session_state.world_tier,
-                 st.session_state.pc_name
+                 st.session_state.pc_name,
+                 loaded_undo_stack
                 ) = memory_manager.load_session(st.session_state.current_file)
+                _set_undo_stack(loaded_undo_stack)
                 if st.session_state.pc_name != "主角" and "主角" in st.session_state.major_graph.get("entities", {}):
                     st.session_state.major_graph["entities"][st.session_state.pc_name] = st.session_state.major_graph["entities"].pop("主角")
                 st.rerun()
@@ -1049,12 +981,47 @@ with col_main:
 
 user_input = st.chat_input("输入内容...")
 
-transition_toggle_key = f"transition_active_{st.session_state.transition_toggle_nonce}"
-is_transition = st.toggle(
-    "本轮输入作为【幕间结语】并触发转场结算",
-    value=False,
-    key=transition_toggle_key,
-)
+# 幕间结语和 AI 建议在同一行，幕间结语占 1/5
+_row = st.container()
+with _row:
+    _c1, _c2 = st.columns([1, 4])
+    with _c1:
+        is_transition = st.toggle("幕间结语", value=False, key=f"transition_active_{st.session_state.transition_toggle_nonce}", help="开启后本轮输入将作为幕间结语并触发转场结算")
+    with _c2:
+        if "ai_suggest_enabled" not in st.session_state:
+            st.session_state.ai_suggest_enabled = False
+        if "ai_suggestions" not in st.session_state:
+            st.session_state.ai_suggestions = []
+        st.session_state.ai_suggest_enabled = st.toggle("💡建议", value=st.session_state.ai_suggest_enabled, key="ai_suggest_toggle_persist_sandbox", help="开启后每轮生成行动建议")
+
+# AI 建议气泡（紧凑）
+if st.session_state.ai_suggest_enabled and st.session_state.ai_suggestions:
+    cols = st.columns(len(st.session_state.ai_suggestions))
+    for i, (summary, full_text) in enumerate(st.session_state.ai_suggestions):
+        with cols[i]:
+            if st.button(summary, key=f"suggest_sandbox_{i}", use_container_width=True):
+                st.session_state._preview_suggestion = full_text
+
+# 建议预览区（点击后显示，不直接发送）
+if hasattr(st.session_state, '_preview_suggestion') and st.session_state._preview_suggestion:
+    preview_text = st.session_state._preview_suggestion
+    col_preview, col_copy, col_cancel, col_send = st.columns([5, 1, 1, 1])
+    with col_preview:
+        st.info(f"📝 {preview_text}")
+    with col_copy:
+        if st.button("📋", key="copy_preview_sandbox", help="复制到剪贴板"):
+            import streamlit.components.v1 as components
+            _escaped = preview_text.replace("\\", "\\\\").replace("`", "\\`")
+            components.html(f"<script>navigator.clipboard.writeText(`{_escaped}`);</script>", height=0)
+            st.toast("已复制到剪贴板")
+    with col_cancel:
+        if st.button("✖", key="cancel_preview_sandbox"):
+            del st.session_state._preview_suggestion
+            st.rerun()
+    with col_send:
+        if st.button("发送", key="send_preview_sandbox"):
+            user_input = preview_text
+            del st.session_state._preview_suggestion
 
 render_sidebar_panel(st.session_state.major_graph)
 
@@ -1077,6 +1044,11 @@ if user_input:
     with col_main:
         with st.chat_message("assistant"):
             try:
+                status_box = st.empty()
+
+                def show_turn_status(stage):
+                    status_box.info(get_friendly_status_text(stage))
+
                 # ==========================================
                 # 【最高优先级分流】：检测是否开启了转场开关
                 # ==========================================
@@ -1097,7 +1069,6 @@ if user_input:
                                 st.toast(f"新世界法则预同步完成: {msg}")
                             else:
                                 st.error(f"世界重塑失败，请稍后手动点击重载按钮。原因: {msg}")
-
                     context_text = core_engine.build_context(
                         st.session_state.memory,
                         st.session_state.active_stage,
@@ -1124,6 +1095,14 @@ if user_input:
                     # 记录最终回复
                     st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})
                     st.session_state.active_scene.append({"role": "assistant", "content": assistant_reply})
+
+                    # AI 建议：每轮对话后生成新建议
+                    if st.session_state.ai_suggest_enabled:
+                        st.session_state.ai_suggestions = core_engine.generate_ai_suggestions(
+                            st.session_state.active_scene,
+                            st.session_state.major_graph,
+                            st.session_state.pc_name,
+                        )
 
 
                     # 幕落渲染完毕，执行后台静默数据更新
@@ -1201,6 +1180,7 @@ if user_input:
                     st.session_state.active_scene = st.session_state.active_scene[-3:]
                     st.session_state.transition_active = False
                     st.session_state.transition_toggle_nonce += 1
+                    commit_undo_snapshot(label=f"撤回第{st.session_state.scene_index}幕转场")
                     trigger_save()
                     st.toast("幕间转场成功，已进入新一幕！")
                     st.rerun()
@@ -1226,10 +1206,11 @@ if user_input:
 
                     st.session_state._last_user_input = user_input
 
-                    result = turn_engine.execute_sandbox_turn(
+                    result = core_engine.execute_sandbox_turn(
                         user_input,
                         st.session_state.active_scene,
                         context_text=context_text,
+                        status_callback=show_turn_status,
                     )
 
                     # render_stream_and_commit 返回 (reply_text, need_rerun)
@@ -1241,6 +1222,9 @@ if user_input:
                     if assistant_reply:
                         st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})
                         st.session_state.active_scene.append({"role": "assistant", "content": assistant_reply})
+                        show_turn_status("undo_commit")
+                        commit_undo_snapshot(label=f"撤回第{st.session_state.scene_index}幕回合")
+                        status_box.empty()
                         trigger_save()
                         # 每次成功回合后刷新，确保侧边栏/图谱用最新数据重绘
                         st.rerun()
@@ -1250,6 +1234,8 @@ if user_input:
                             st.session_state.history_archive.pop()
                         if st.session_state.active_scene and st.session_state.active_scene[-1]["role"] == "user":
                             st.session_state.active_scene.pop()
+                        st.session_state.pop("_undo_before_state", None)
+                        status_box.empty()
                         trigger_save()
 
             except Exception as e:
@@ -1264,6 +1250,11 @@ if user_input:
                 if st.session_state.active_scene and st.session_state.active_scene[-1]["role"] == "user":
                     st.session_state.active_scene.pop()
 
+                st.session_state.pop("_undo_before_state", None)
+                try:
+                    status_box.empty()
+                except Exception:
+                    pass
                 trigger_save()
 
 # 确保在文件最底部追加此段代码，处理弹窗的根节点渲染
@@ -1276,7 +1267,3 @@ if st.session_state.get("show_settings", False):
 if st.session_state.get("show_control_settings", False):
     st.session_state.show_control_settings = False
     control_settings_dialog()
-
-if st.session_state.get("show_current_world_settings", False):
-    st.session_state.show_current_world_settings = False
-    current_world_settings_dialog()

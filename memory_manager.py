@@ -1,7 +1,8 @@
+
 import json
 import os
 import time
-import config
+import config as config
 import streamlit as st
 from supabase import create_client, Client
 
@@ -51,7 +52,7 @@ def get_chat_files():
         print(f"[严重错误] 获取云端存档列表物理失败。底层原因: {e}")
         return []
 
-def save_session(file_name, memory, history_archive, active_scene, minor_npcs, major_graph, graveyard, director_directive, scene_index, tension_history, current_location, mechanics_log, sync_log, gm_memory, world_tier, pc_name):
+def save_session(file_name, memory, history_archive, active_scene, minor_npcs, major_graph, graveyard, director_directive, scene_index, tension_history, current_location, mechanics_log, sync_log, gm_memory, world_tier, pc_name, undo_stack=None):
     if not file_name:
         return
         
@@ -73,7 +74,8 @@ def save_session(file_name, memory, history_archive, active_scene, minor_npcs, m
         "mechanics_log": mechanics_log,
         "sync_log": sync_log,
         "world_tier": world_tier,
-        "pc_name": pc_name
+        "pc_name": pc_name,
+        "undo_stack": undo_stack if isinstance(undo_stack, list) else []
     }
     
     try:
@@ -105,14 +107,15 @@ def load_session(file_name):
                 "3_capabilities": {},
                 "4_experience_factors": {"general_combat": 1.0, "specific_match": {}},
                 "5_traits": [],
-                "6_inventory": {}
+                "6_inventory": {},
+                "7_held_items": {}
             }
         }, 
         "relations": []
     }
     default_graveyard = {}
     
-    default_return = ("", [], [], default_minor, default_major, default_graveyard, "", 1, [], "未知区域", [], [], [], "", "")
+    default_return = ("", [], [], default_minor, default_major, default_graveyard, "", 1, [], "未知区域", [], [], [], "", "", [])
 
     current_user = st.session_state.get("current_user")
     if not current_user:
@@ -150,7 +153,8 @@ def load_session(file_name):
             data.get("sync_log") if isinstance(data.get("sync_log"), list) else [], 
             gm_memory, 
             data.get("world_tier") or "近未来都市异能 / 中低武阶段",
-            data.get("pc_name") or "主角"
+            data.get("pc_name") or "主角",
+            data.get("undo_stack") if isinstance(data.get("undo_stack"), list) else []
         )
         
     except Exception as e:
@@ -258,7 +262,8 @@ def process_npc_updates(extracted_data, minor_npcs, major_graph, graveyard, scen
                 "3_capabilities": {},
                 "4_experience_factors": {"general_combat": 1.0, "specific_match": {}},
                 "5_traits": [],
-                "6_inventory": {}
+                "6_inventory": {},
+                "7_held_items": {}
             }
             del minor_npcs[name]
 

@@ -1,3 +1,28 @@
+# -*- coding: utf-8 -*-
+"""
+sandbox_rules/adjudication_utils.py — 沙盒版本检定工具函数
+
+================================================================================
+🔔 AI 助手维护提醒（每次修改前必读）
+================================================================================
+
+【沙盒版本绝对隔离原则】
+- 本文件是 rules/adjudication_utils.py 的 1:1 沙盒镜像副本
+- 所有导入必须指向 sandbox_ 前缀版本
+- 禁止直接调用主版本（rules/ 等）
+- 沙盒修改不得污染主版本管线
+
+【修改步骤】
+1. 如需修改功能，先在此沙盒版本测试验证
+2. 验证通过后，将修改实质迁移到主版本
+3. 不要简单让主版本跳转到沙盒版本
+
+【文件对应关系】
+- sandbox_rules/adjudication_utils.py ↔ rules/adjudication_utils.py
+
+================================================================================
+"""
+
 import json
 import random
 
@@ -11,6 +36,25 @@ ACTION_DOMAIN_MAP = {
     "social": "社交",
 }
 
+# ---------------------------------------------------------------------------
+# Prompt 模板（模块级常量）
+# ---------------------------------------------------------------------------
+_DYNAMIC_BASE_TEMPLATE = """你是一个 TRPG 的动态数值裁决引擎。
+
+【当前宇宙法则与威力比例尺】
+{world_anchor_text}
+
+【任务协议】
+当前正在评估 {role_type}：{entity_name or '环境'}
+使用的动作/应对特征：{specific_action or '环境默认作用'}
+
+请严格对照上方的【威力比例尺】，推断其在当前世界法则下合理的 dynamic_base (基数)。
+必须返回纯 JSON 格式：
+{{
+    "dynamic_name": "提炼的具体动作或灾难/环境特征名",
+    "dynamic_base": 25
+}}"""
+
 
 def _get_user_client():
     from core_engine import get_user_client
@@ -18,17 +62,43 @@ def _get_user_client():
     return get_user_client()
 
 
+def safe_clamp_multiplier(raw) -> float:
+    """对 LLM 输出的乘数做边界校验：类型检查 + 范围限制 0.3~3.0"""
+    if not isinstance(raw, (int, float)):
+        return 1.0
+    return max(0.3, min(float(raw), 3.0))
+
+
+def _scan_item_buffs(item_name, item_data, action_domains, matched_assets):
+    """从单个物品/手持物中提取乘数，优先 contextual_multiplier"""
+    if not isinstance(item_data, dict):
+        return None
+    tags = item_data.get("tags", item_data.get("target_domains", []))
+    if item_name not in matched_assets and not set(tags).intersection(set(action_domains)):
+        return None
+    mult = safe_clamp_multiplier(
+        item_data.get("contextual_multiplier", item_data.get("multiplier", 1.0))
+    )
+    return mult
+
+
 def calculate_conditional_buffs(entity_data, action_domains, opp_name, is_social, matched_assets):
     total_mult = 1.0
     activated = []
 
+    # 扫描背包物品
     for item_name, item_data in entity_data.get("6_inventory", {}).items():
-        if isinstance(item_data, dict):
-            tags = item_data.get("tags", item_data.get("target_domains", []))
-            if item_name in matched_assets or set(tags).intersection(set(action_domains)):
-                mult = item_data.get("multiplier", 1.0)
-                total_mult *= mult
-                activated.append(f"{item_name}(x{mult})")
+        mult = _scan_item_buffs(item_name, item_data, action_domains, matched_assets)
+        if mult is not None:
+            total_mult *= mult
+            activated.append(f"{item_name}(x{mult})")
+
+    # 扫描手持物
+    for item_name, item_data in entity_data.get("7_held_items", {}).items():
+        mult = _scan_item_buffs(item_name, item_data, action_domains, matched_assets)
+        if mult is not None:
+            total_mult *= mult
+            activated.append(f"{item_name}(x{mult})")
 
     for trait in entity_data.get("5_traits", []):
         t_name = trait.get("name", "")
@@ -56,21 +126,12 @@ def call_llm_for_dynamic_base(entity_name, specific_action, is_defense, world_an
     if not client:
         return entity_name or "环境", 15
 
-    system_prompt = f"""你是一个 TRPG 的动态数值裁决引擎。
-
-【当前宇宙法则与威力比例尺】
-{world_anchor_text}
-
-【任务协议】
-当前正在评估 {role_type}：{entity_name or '环境'}
-使用的动作/应对特征：{specific_action or '环境默认作用'}
-
-请严格对照上方的【威力比例尺】，推断其在当前世界法则下合理的 dynamic_base (基数)。
-必须返回纯 JSON 格式：
-{{
-    "dynamic_name": "提炼的具体动作或灾难/环境特征名",
-    "dynamic_base": 25
-}}"""
+    system_prompt = _DYNAMIC_BASE_TEMPLATE.format(
+        world_anchor_text=world_anchor_text,
+        role_type=role_type,
+        entity_name=entity_name or '环境',
+        specific_action=specific_action or '环境默认作用',
+    )
 
     try:
         response = client.chat.completions.create(

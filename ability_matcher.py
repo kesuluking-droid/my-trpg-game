@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
+
 """
-ability_matcher.py — 招式语义匹配引擎
+sandbox_ability_matcher.py — 招式语义匹配引擎 (沙盒版本)
 
 使用 sentence-transformers 本地计算向量相似度，替代字符串匹配。
 零额外 API 调用，白盒可解释。
