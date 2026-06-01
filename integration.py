@@ -52,14 +52,9 @@ def _strip_state_changed_marker(text: str) -> tuple[str, bool]:
 
 
 def _strip_hidden_control_text(text: str) -> str:
-    """移除不应展示给玩家的内部控制符和状态同步泄露行。"""
+    """只移除明确的机器协议控制符，不基于自然语言黑名单删除叙事。"""
     cleaned = re.sub(r"\s*\[STATE_CHANGED\]\s*", "", text or "")
     cleaned = re.sub(r"\s*<STATUS_UPDATE:\s*.+?>\s*", "", cleaned)
-    cleaned = re.sub(
-        r"(?im)^\s*(状态变动|状态变化|状态更新|内部状态|图谱同步|同步状态)\s*[:：].*$",
-        "",
-        cleaned,
-    )
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
