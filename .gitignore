@@ -29,6 +29,8 @@ todolist.md
 后台测试结果.md
 设计原则.md
 .trae/
+docs/
+tests/
 
 # 本地沙盒开发入口 / 沙盒命名文件
 sandbox_*.py
