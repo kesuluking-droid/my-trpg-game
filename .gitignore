@@ -25,8 +25,15 @@ __pycache__/
 待实现需求.txt
 测试样例.txt
 newdesign.txt
+todolist.md
+后台测试结果.md
+设计原则.md
+.trae/
 
-# 本地沙盒开发入口 / 旧沙盒命名文件
+# 本地沙盒开发入口 / 沙盒命名文件
+sandbox_*.py
+sandbox_rules/
+sandbox_migration_status.md
 sandbox_app.py
 sandbox_core_engine.py
 sandbox_intent_parser.py
