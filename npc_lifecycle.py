@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""sandbox_npc_lifecycle.py — NPC 证据检索与身份生命周期工具层。"""
+"""npc_lifecycle.py — NPC 证据检索与身份生命周期工具层。"""
 
 from __future__ import annotations
 

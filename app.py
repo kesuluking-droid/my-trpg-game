@@ -1084,25 +1084,29 @@ if user_input:
                     context_text += "\n【最高指令】：玩家已提供本幕最终结语。请以此结语为基础为本幕收尾，渲染一段客观的幕落、场景淡出或时空转场描写，为该阶段剧情正式画上句号。"
 
                     # 使用 PRO 模型流式渲染最终演变
-                    stream = core_engine.generate_chat_stream(context_text, st.session_state.active_scene)
+                    suggest_on = st.session_state.get("ai_suggest_enabled", False)
+                    stream = core_engine.generate_chat_stream(context_text, st.session_state.active_scene, include_suggestions=suggest_on)
                     text_placeholder = st.empty()
                     assistant_reply = ""
                     for chunk in stream:
                         assistant_reply += chunk
                         text_placeholder.markdown(assistant_reply + "▌")
-                    text_placeholder.markdown(assistant_reply)
+                    # 清洗隐藏控制符后显示
+                    from integration import _strip_hidden_control_text, _extract_suggestions
+                    display_reply = _strip_hidden_control_text(assistant_reply)
+                    text_placeholder.markdown(display_reply)
 
-                    # 记录最终回复
-                    st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})
-                    st.session_state.active_scene.append({"role": "assistant", "content": assistant_reply})
+                    # 记录最终回复（用清洗后的文本）
+                    st.session_state.history_archive.append({"role": "assistant", "content": display_reply})
+                    st.session_state.active_scene.append({"role": "assistant", "content": display_reply})
 
-                    # AI 建议：每轮对话后生成新建议
-                    if st.session_state.ai_suggest_enabled:
-                        st.session_state.ai_suggestions = core_engine.generate_ai_suggestions(
-                            st.session_state.active_scene,
-                            st.session_state.major_graph,
-                            st.session_state.pc_name,
-                        )
+                    # 从输出中提取建议
+                    if suggest_on:
+                        suggestions = _extract_suggestions(assistant_reply)
+                        if suggestions:
+                            st.session_state.ai_suggestions = suggestions
+
+
 
 
                     # 幕落渲染完毕，执行后台静默数据更新
@@ -1213,11 +1217,20 @@ if user_input:
                         status_callback=show_turn_status,
                     )
 
-                    # render_stream_and_commit 返回 (reply_text, need_rerun)
+                    # render_stream_and_commit 返回 (reply_text, need_rerun, suggestions)
                     if isinstance(result, tuple):
-                        assistant_reply, need_rerun = result
+                        if len(result) >= 3:
+                            assistant_reply, need_rerun, suggestions = result
+                        else:
+                            assistant_reply, need_rerun = result
+                            suggestions = []
                     else:
                         assistant_reply, need_rerun = result, False
+                        suggestions = []
+
+                    # 从 PRO 输出中获取建议
+                    if st.session_state.ai_suggest_enabled and suggestions:
+                        st.session_state.ai_suggestions = suggestions
 
                     if assistant_reply:
                         st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})

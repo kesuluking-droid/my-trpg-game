@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""sandbox_ui_feedback.py — 沙盒 UI 友好等待提示文案。"""
+"""ui_feedback.py — 沙盒 UI 友好等待提示文案。"""
 
 FRIENDLY_STATUS_TEXT = {
     "turn_start": "🕯️ 正在点亮这一幕的舞台...",

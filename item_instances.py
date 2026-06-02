@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""sandbox_item_instances.py — 沙盒全局物品实例池工具层。"""
+"""item_instances.py — 沙盒全局物品实例池工具层。"""
 
 from __future__ import annotations
 

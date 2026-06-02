@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""sandbox_undo_manager.py — 后悔药反向增量 patch 管理器。"""
+"""undo_manager.py — 后悔药反向增量 patch 管理器。"""
 
 from __future__ import annotations
 

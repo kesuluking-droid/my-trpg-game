@@ -104,6 +104,31 @@ def remove_maintenance_header(content: str) -> str:
     return content
 
 
+def remove_sandbox_docstring_prefix(content: str, main_filename: str) -> str:
+    """移除文档字符串中的沙盒文件名前缀
+    
+    例如：
+    sandbox_core_engine.py — 沙盒桥接引擎
+    → core_engine.py — 沙盒桥接引擎
+    
+    sandbox_sandbox_integration.py — 沙盒集成层
+    → integration.py — 沙盒集成层
+    """
+    # 匹配文档字符串第一行中的沙盒文件名
+    # 格式："""sandbox_xx.py — 或 """sandbox_sandbox_xx.py —
+    patterns = [
+        # sandbox_sandbox_xx.py — 形式（双重前缀）
+        (r'("""\s*)sandbox_sandbox_([a-z_]+\.py\s*—)', rf'\1\2'),
+        # sandbox_xx.py — 形式
+        (r'("""\s*)sandbox_([a-z_]+\.py\s*—)', rf'\1\2'),
+    ]
+    
+    for pattern, replacement in patterns:
+        content = re.sub(pattern, replacement, content)
+    
+    return content
+
+
 def transform_imports(content: str) -> str:
     """转换沙盒导入为主版本导入"""
     for pattern, replacement in IMPORT_REPLACEMENTS:
@@ -130,6 +155,7 @@ def sync_file(sandbox_file: str, main_file: str, dry_run: bool = False) -> tuple
     
     # 转换内容
     transformed_content = remove_maintenance_header(content)
+    transformed_content = remove_sandbox_docstring_prefix(transformed_content, main_file)
     transformed_content = transform_imports(transformed_content)
     
     if dry_run:
@@ -172,6 +198,7 @@ def check_differences() -> list[tuple[str, str, bool]]:
             sandbox_content = f.read()
         
         transformed_content = remove_maintenance_header(sandbox_content)
+        transformed_content = remove_sandbox_docstring_prefix(transformed_content, main_file)
         transformed_content = transform_imports(transformed_content)
         
         if not main_path.exists():

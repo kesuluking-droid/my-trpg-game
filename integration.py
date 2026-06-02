@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-sandbox_integration.py — 沙盒集成层（隔离防腐层）
+integration.py — 沙盒集成层（隔离防腐层）
 
 【设计哲学】
 - LLM 是世界的造物主，Python 是书记员和算盘。
@@ -55,8 +55,24 @@ def _strip_hidden_control_text(text: str) -> str:
     """只移除明确的机器协议控制符，不基于自然语言黑名单删除叙事。"""
     cleaned = re.sub(r"\s*\[STATE_CHANGED\]\s*", "", text or "")
     cleaned = re.sub(r"\s*<STATUS_UPDATE:\s*.+?>\s*", "", cleaned)
+    cleaned = re.sub(r"\s*\[SUGGESTION:\s*.+?\]\s*", "", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+def _extract_suggestions(text: str) -> list[tuple[str, str]]:
+    """从模型输出中提取 [SUGGESTION: 简述|完整建议] 标记，返回 [(summary, full_text), ...]。"""
+    matches = re.findall(r"\[SUGGESTION:\s*(.+?)\]", text or "")
+    results = []
+    for m in matches:
+        parts = m.split("|", 1)
+        if len(parts) == 2:
+            results.append((parts[0].strip(), parts[1].strip()))
+        else:
+            results.append((m.strip()[:15], m.strip()))
+    # 限制2-4条建议
+    if len(results) < 2:
+        return results
+    return results[:4]
 
 
 def append_narrative_length_instruction(context_text: str) -> str:
@@ -544,9 +560,12 @@ def render_stream_and_commit(
                             })
                     st.toast("角色身心状态已根据战斗结果同步！")
 
-        return display_response, need_rerun
+        # ---- 8. 提取建议 ----
+        suggestions = _extract_suggestions(full_response)
+
+        return display_response, need_rerun, suggestions
 
     except Exception as exc:
         placeholder.empty()
         st.error(f"沙盒回合事务失败，已回滚本回合渲染与补丁提交：{exc}")
-        return "", False
+        return "", False, []

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-sandbox_core_engine.py — 沙盒桥接引擎
+core_engine.py — 沙盒桥接引擎
 
 【设计哲学】
 - LLM 是世界的造物主，Python 是书记员和算盘。
@@ -270,11 +270,11 @@ def extract_memory_summary(active_scene, scene_index):
 
 
 def generate_ai_suggestions(active_scene, major_graph, pc_name, current_location=None, world_tier=None):
-    """生成 UI 动作建议。"""
-    return ["观察周围环境", "询问附近人物", "检查自身状态"]
+    """占位：建议已由 PRO 模型在叙事输出中顺带生成，由 render_stream_and_commit 提取。"""
+    return []
 
 
-def generate_chat_stream(context_text, active_scene, override_tail=None):
+def generate_chat_stream(context_text, active_scene, override_tail=None, include_suggestions=True):
     """沙盒版 PRO 流式叙事生成器。"""
     if DEBUG_MODE:
         time.sleep(0.5)
@@ -286,7 +286,19 @@ def generate_chat_stream(context_text, active_scene, override_tail=None):
     runtime_messages = [{"role": "system", "content": context_text}]
     runtime_messages.extend(active_scene)
 
-    tail_instruction = "【最高执行协议】：若本次回复推演导致任何角色身心状态、特质、重要物品发生重大非战斗性转变（身心状态如大喜大悲、心神不宁、顿悟洗心革面等，特质比如吃下宝物导致百毒不侵等、重要物品比如丢失、意外获得利器），必须在回复最末尾独立一行输出 `<STATUS_UPDATE: 角色名>`。若无重大转变，绝对不要输出此标记。该标记是系统内部控制符，不属于叙事内容，除精确标记外，严禁输出“状态变动”“状态更新”“图谱同步”等解释性文字。正式叙事请尽量凝练，原则上不超过500字。"
+    tail_instruction = (
+        "【角色扮演边界协议】：你是故事的叙述者和世界的造物主，负责描述环境、NPC行动和事件发展。"
+        "你绝对禁止代替玩家角色（PC）进行说话、思考或行动。"
+        "不要写出'你说道'、'你想'、'你决定'等代替玩家决策的内容。"
+        "玩家的行动必须由玩家自己输入，你只能回应玩家的行动。\n"
+        "【最高执行协议】：若本次回复推演导致任何角色身心状态、特质、重要物品发生重大非战斗性转变（身心状态如大喜大悲、心神不宁、顿悟洗心革面等，特质比如吃下宝物导致百毒不侵等、重要物品比如丢失、意外获得利器），必须在回复最末尾独立一行输出 `<STATUS_UPDATE: 角色名>`。若无重大转变，绝对不要输出此标记。该标记是系统内部控制符，不属于叙事内容，除精确标记外，严禁输出\"状态变动\"\"状态更新\"\"图谱同步\"等解释性文字。正式叙事请尽量凝练，原则上不超过500字。\n"
+    )
+    if include_suggestions:
+        tail_instruction += (
+            "【行动建议协议】：在叙事正文结束后，请输出2~4条行动建议。"
+            "格式为 [SUGGESTION: 简短标题|完整建议文本]，每条一行。"
+            "建议应基于当前情境，帮助玩家决定下一步行动。"
+        )
     if override_tail:
         tail_instruction += f"\n{override_tail}"
     runtime_messages.append({"role": "system", "content": tail_instruction})
@@ -947,9 +959,11 @@ def execute_sandbox_turn(
     # ---- 4. LLM 自由创作（流式）----
     safe_status(status_callback, "narration")
     # 将校验注入作为独立参数传递，确保不被长上下文淹没
+    suggest_enabled = st.session_state.get("ai_suggest_enabled", False)
     raw_stream = generate_chat_stream(
         enriched_context, active_scene,
         override_tail=validation_injection if validation_injection else None,
+        include_suggestions=suggest_enabled,
     )
 
     # ---- 5. 组装日志 ----
