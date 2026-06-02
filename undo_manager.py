@@ -20,6 +20,7 @@ UNDO_TRACKED_KEYS = [
     "current_location",
     "mechanics_log",
     "sync_log",
+    "ai_suggestions",
 ]
 
 

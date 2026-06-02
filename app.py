@@ -603,6 +603,8 @@ def undo_last_turn():
         undo_manager.apply_inverse_patch(st.session_state, entry)
     else:
         undo_manager.restore_legacy_snapshot(st.session_state, entry)
+    st.session_state.pop("_preview_suggestion", None)
+    st.session_state.pop("_pending_suggestion_send", None)
     trigger_save()
     return True
 
@@ -994,6 +996,9 @@ with _row:
             st.session_state.ai_suggestions = []
         st.session_state.ai_suggest_enabled = st.toggle("💡建议", value=st.session_state.ai_suggest_enabled, key="ai_suggest_toggle_persist_sandbox", help="开启后每轮生成行动建议")
 
+if not user_input and st.session_state.get("_pending_suggestion_send"):
+    user_input = st.session_state.pop("_pending_suggestion_send")
+
 # AI 建议气泡（紧凑）
 if st.session_state.ai_suggest_enabled and st.session_state.ai_suggestions:
     cols = st.columns(len(st.session_state.ai_suggestions))
@@ -1020,8 +1025,9 @@ if hasattr(st.session_state, '_preview_suggestion') and st.session_state._previe
             st.rerun()
     with col_send:
         if st.button("发送", key="send_preview_sandbox"):
-            user_input = preview_text
-            del st.session_state._preview_suggestion
+            st.session_state._pending_suggestion_send = preview_text
+            st.session_state.pop("_preview_suggestion", None)
+            st.rerun()
 
 render_sidebar_panel(st.session_state.major_graph)
 
@@ -1100,11 +1106,12 @@ if user_input:
                     st.session_state.history_archive.append({"role": "assistant", "content": display_reply})
                     st.session_state.active_scene.append({"role": "assistant", "content": display_reply})
 
-                    # 从输出中提取建议
+                    # 从输出中提取建议；每轮都覆盖，避免保留上一轮旧建议
                     if suggest_on:
-                        suggestions = _extract_suggestions(assistant_reply)
-                        if suggestions:
-                            st.session_state.ai_suggestions = suggestions
+                        st.session_state.ai_suggestions = _extract_suggestions(assistant_reply)
+                    else:
+                        st.session_state.ai_suggestions = []
+                    st.session_state.pop("_preview_suggestion", None)
 
 
 
@@ -1228,9 +1235,12 @@ if user_input:
                         assistant_reply, need_rerun = result, False
                         suggestions = []
 
-                    # 从 PRO 输出中获取建议
-                    if st.session_state.ai_suggest_enabled and suggestions:
-                        st.session_state.ai_suggestions = suggestions
+                    # 从 PRO 输出中获取建议；每轮都覆盖，避免保留上一轮旧建议
+                    if st.session_state.ai_suggest_enabled:
+                        st.session_state.ai_suggestions = suggestions or []
+                    else:
+                        st.session_state.ai_suggestions = []
+                    st.session_state.pop("_preview_suggestion", None)
 
                     if assistant_reply:
                         st.session_state.history_archive.append({"role": "assistant", "content": assistant_reply})

@@ -45,8 +45,8 @@ _DYNAMIC_BASE_TEMPLATE = """你是一个 TRPG 的动态数值裁决引擎。
 {world_anchor_text}
 
 【任务协议】
-当前正在评估 {role_type}：{entity_name or '环境'}
-使用的动作/应对特征：{specific_action or '环境默认作用'}
+当前正在评估 {role_type}：{entity_display_name}
+使用的动作/应对特征：{specific_action_display}
 
 请严格对照上方的【威力比例尺】，推断其在当前世界法则下合理的 dynamic_base (基数)。
 必须返回纯 JSON 格式：
@@ -129,8 +129,8 @@ def call_llm_for_dynamic_base(entity_name, specific_action, is_defense, world_an
     system_prompt = _DYNAMIC_BASE_TEMPLATE.format(
         world_anchor_text=world_anchor_text,
         role_type=role_type,
-        entity_name=entity_name or '环境',
-        specific_action=specific_action or '环境默认作用',
+        entity_display_name=entity_name or "环境",
+        specific_action_display=specific_action or "环境默认作用",
     )
 
     try:
